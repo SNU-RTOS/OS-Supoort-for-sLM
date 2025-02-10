@@ -1,0 +1,39 @@
+Running scope as unit: run-r86df97345bbe4f489490bd95586f8d49.scope
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+[INFO] Preparing Required Components
+
+[INFO] Model Loading took 11 ms
+
+[INFO] Interpreter Building took 1106 ms
+normalizer.cc(52) LOG(INFO) precompiled_charsmap is empty. use identity normalization.
+
+[INFO] SentencePiece Loading took 109 ms
+
+[INFO] KV Cache Building took 273 ms
+
+[INFO] LoRA Loading took 0 ms
+
+[INFO] Input Prompt Preparation took 2 ms
+
+[INFO] Signature Runners Preparation took 152 ms
+
+[INFO] Prefill Stage took 33925 ms
+
+Prompt:
+Under the canopy of a vast, a lone traveler stood at the edge of a towering cliff, gazing at the sprawling valley below. The cool night air carried whispers of the wind as it swept through the towering pines, rustling their branches in a rhythmic dance. The moon bathed the landscape in an ethereal glow, revealing the winding river that snaked its way through the valley. It was moments like these that made the traveler feel truly alive. For years, they had wandered from town to town, across mountains and deserts, through bustling cities and silent ruins, searching for something they could never quite name. Was it adventure? A sense of belonging? Or perhaps, a deeper understanding of themselves? Every road they traveled, every stranger they met, and every story they heard seemed to weave itself into the fabric of their journey, shaping them into someone they never imagined they would become.Tonight, as they stood at the edge of this breathtaking expanse, they felt a quiet certainty settle within them. The path ahead was still uncertain, filled with possibilities both wondrous and terrifying. But for the first time in a long while, they were no longer afraid. They took a deep breath, letting the crisp mountain air fill their lungs, and with a determined step forward, they continued on their journey, ready to embrace whatever lay beyond the horizon.The night stretched endlessly before them, and as they walked, memories flooded their mind. They remembered the markets of distant lands, where spices filled the air with intoxicating aromas, where merchants shouted in unfamiliar tongues, offering goods from places they had only ever dreamed of. They recalled the laughter of strangers who had become friends, the shared meals under the glow of lantern light, and the quiet, reflective moments spent beneath foreign skies.Each step they took carried echoes of past adventures, yet also whispered promises of new discoveries ahead. Would they stumble upon forgotten ruins, their walls covered in stories waiting to be unraveled? Would they find themselves lost in a dense jungle, where the call of unseen creatures sent shivers down their spine? Or perhaps, in some distant village, they would finally meet someone who understood the restless yearning that had driven them forward all these years.They did not know, and that was the beauty of it. The unknown was not something to fear, but something to embrace, to welcome with open arms and a heart willing to be changed. The road stretched ahead, winding through the darkness, illuminated only by the stars above and the flickering lantern in their hand.
+
+Output Text:
+ And they knew, without a doubt, that they would walk it, no matter where it led, for it was on this journey that they had discovered the true meaning of home.The quiet rustle of leaves beneath their feet served as a reminder that the world was full of stories waiting to be told, of paths yet to be walked, and of secrets yet to be uncovered. And with every step, they felt their heart pounding in rhythm with the universe, their spirit soaring on the wind that carried them forward into the unknown, toward a future that was both uncertain and full of possibility. The night deepened, the stars shone brighter,
+
+================================
+[INFO] Decoding stage completed
+[METRICS] Total Number of Generated Tokens : 128 tokens
+
+[METRICS] Total Inference Latency          : 514584 ms
+[METRICS] Total Sampling Latency           : 1383.68 ms
+[METRICS] Total Decoding Latency           : 515989 ms
+
+[METRICS] Time To First Token              : 4512.27 ms
+[METRICS] Average Inference Latency        : 4020.19 ms/tokens(0.248745 token/s )
+[METRICS] Average Sampling Latency         : 10.81 ms/tokens(92.5068 token/s )
+[METRICS] Average Decoding Latency         : 4031 ms/tokens(0.248067 token/s )

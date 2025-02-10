@@ -1,0 +1,41 @@
+Running scope as unit: run-rdfefd68e057d43619682d6119b5cfa41.scope
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+[INFO] Preparing Required Components
+
+[INFO] Model Loading took 12 ms
+
+[INFO] Interpreter Building took 1105 ms
+normalizer.cc(52) LOG(INFO) precompiled_charsmap is empty. use identity normalization.
+
+[INFO] SentencePiece Loading took 114 ms
+
+[INFO] KV Cache Building took 271 ms
+
+[INFO] LoRA Loading took 0 ms
+
+[INFO] Input Prompt Preparation took 1 ms
+
+[INFO] Signature Runners Preparation took 79 ms
+
+[INFO] Prefill Stage took 21814 ms
+
+Prompt:
+The morning sun peeked over the horizon, casting long golden rays across the rolling fields of emerald green. Birds chirped melodiously as a gentle breeze rustled through the leaves, carrying with it the crisp scent of dew-covered grass. Amelia stepped onto the porch of her family’s countryside cottage, a cup of coffee warming her hands as she gazed out at the landscape before her. The familiar routine of her peaceful mornings had always brought her comfort, yet on this particular day, something within her felt different. There was a sense of anticipation lingering in the air, an unshakable feeling that change was on the horizon. As she took a slow sip, the aroma of freshly brewed coffee filling her senses, she recalled the letter she had received the day before. It was an invitation to an archaeological expedition deep in the heart of South America, a once-in-a-lifetime opportunity to uncover the mysteries of an ancient civilization long lost to time. The prospect thrilled her, yet it also filled her with an overwhelming sense of uncertainty. Could she really leave behind the life she had always known in pursuit of something so uncertain? The decision weighed heavily on her mind as she watched the morning mist dissipate, revealing the vast expanse of endless possibilities that lay before her.
+
+Output Text:
+ And with that, the questions Amelia had always avoided came flooding back, begging for answers that only the wind seemed to hold the key to. 
+
+She thought about her loving but demanding mother, who had always encouraged her to follow her heart, yet struggled with the idea of letting go of her daughter’s safety and security. Amelia’s father, a rugged man with a kind heart, was more pragmatic, urging her to explore the world, to forge her own path, but also to be mindful of the risks and challenges that lay ahead. Her friends, her loyal companions of childhood, seemed just as torn, caught between the allure of adventure and
+
+================================
+[INFO] Decoding stage completed
+[METRICS] Total Number of Generated Tokens : 128 tokens
+
+[METRICS] Total Inference Latency          : 514715 ms
+[METRICS] Total Sampling Latency           : 1418.11 ms
+[METRICS] Total Decoding Latency           : 516155 ms
+
+[METRICS] Time To First Token              : 4737.2 ms
+[METRICS] Average Inference Latency        : 4021.21 ms/tokens(0.248681 token/s )
+[METRICS] Average Sampling Latency         : 11.079 ms/tokens(90.2613 token/s )
+[METRICS] Average Decoding Latency         : 4032.29 ms/tokens(0.247988 token/s )

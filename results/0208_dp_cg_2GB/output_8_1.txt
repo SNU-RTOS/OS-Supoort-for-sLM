@@ -1,0 +1,42 @@
+Running scope as unit: run-r33c2fe5bf0d1415c88ee0de9c8b08def.scope
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+[INFO] Preparing Required Components
+
+[INFO] Model Loading took 11 ms
+
+[INFO] Interpreter Building took 1082 ms
+normalizer.cc(52) LOG(INFO) precompiled_charsmap is empty. use identity normalization.
+
+[INFO] SentencePiece Loading took 108 ms
+
+[INFO] KV Cache Building took 275 ms
+
+[INFO] LoRA Loading took 0 ms
+
+[INFO] Input Prompt Preparation took 0 ms
+
+[INFO] Signature Runners Preparation took 14 ms
+
+[INFO] Prefill Stage took 4259 ms
+
+Prompt:
+Sun rises, birds sing, day begins
+
+Output Text:
+ begins.
+The sun rises over the mountains, casting a warm glow over the landscape. Birds chirp and sing their morning songs, a chorus of joy and new beginnings. The day stretches out before us, full of promise and possibility.
+
+The cycle of the seasons brings its own rhythms and routines. In the spring, the world awakens from its winter slumber, and new life bursts forth in all its vibrant colors. Summer brings long, lazy days and warm nights, perfect for strolling through gardens or lounging by the pool. Autumn brings a riot of color and a sense of coziness, as the air grows crisper and the
+
+================================
+[INFO] Decoding stage completed
+[METRICS] Total Number of Generated Tokens : 128 tokens
+
+[METRICS] Total Inference Latency          : 517458 ms
+[METRICS] Total Sampling Latency           : 1410.1 ms
+[METRICS] Total Decoding Latency           : 518891 ms
+
+[METRICS] Time To First Token              : 4358.58 ms
+[METRICS] Average Inference Latency        : 4042.64 ms/tokens(0.247363 token/s )
+[METRICS] Average Sampling Latency         : 11.0164 ms/tokens(90.7738 token/s )
+[METRICS] Average Decoding Latency         : 4053.65 ms/tokens(0.24668 token/s )

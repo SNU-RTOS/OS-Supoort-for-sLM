@@ -1,0 +1,47 @@
+Running scope as unit: run-reb5d2edfe1f946128fe0eb473f588da9.scope
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+[INFO] Preparing Required Components
+
+[INFO] Model Loading took 11 ms
+
+[INFO] Interpreter Building took 1126 ms
+normalizer.cc(52) LOG(INFO) precompiled_charsmap is empty. use identity normalization.
+
+[INFO] SentencePiece Loading took 112 ms
+
+[INFO] KV Cache Building took 276 ms
+
+[INFO] LoRA Loading took 0 ms
+
+[INFO] Input Prompt Preparation took 0 ms
+
+[INFO] Signature Runners Preparation took 29 ms
+
+[INFO] Prefill Stage took 10684 ms
+
+Prompt:
+Which is the best option, Samsung Galaxy or Apple IPhone?
+
+Output Text:
+ It's really hard to compare them, but I can give you a breakdown of their differences and some pros and cons of each.
+
+**Design:**
+Samsung Galaxy: Typically larger and heavier, with a more plastic-like feel.
+Apple iPhone: Generally smaller and lighter, with a stainless steel frame and glass front and back.
+
+**Display:**
+Samsung Galaxy: Often features a higher refresh rate (up to 120Hz), larger screen sizes (up to 6.8 inches), and a more affordable price tag.
+Apple iPhone: Known for its vibrant OLED display, water resistance, and a more limited range of screen sizes (up to 
+
+================================
+[INFO] Decoding stage completed
+[METRICS] Total Number of Generated Tokens : 128 tokens
+
+[METRICS] Total Inference Latency          : 523428 ms
+[METRICS] Total Sampling Latency           : 1427.94 ms
+[METRICS] Total Decoding Latency           : 524883 ms
+
+[METRICS] Time To First Token              : 4407.93 ms
+[METRICS] Average Inference Latency        : 4089.28 ms/tokens(0.244542 token/s )
+[METRICS] Average Sampling Latency         : 11.1558 ms/tokens(89.6394 token/s )
+[METRICS] Average Decoding Latency         : 4100.43 ms/tokens(0.243864 token/s )

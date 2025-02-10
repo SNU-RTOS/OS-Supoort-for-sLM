@@ -1,0 +1,43 @@
+Running scope as unit: run-r959ac011a8d44e18acb81ed059195c9d.scope
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+[INFO] Preparing Required Components
+
+[INFO] Model Loading took 8 ms
+
+[INFO] Interpreter Building took 657 ms
+normalizer.cc(52) LOG(INFO) precompiled_charsmap is empty. use identity normalization.
+
+[INFO] SentencePiece Loading took 109 ms
+
+[INFO] KV Cache Building took 268 ms
+
+[INFO] LoRA Loading took 0 ms
+
+[INFO] Input Prompt Preparation took 0 ms
+
+[INFO] Signature Runners Preparation took 45 ms
+
+[INFO] Prefill Stage took 16877 ms
+
+Prompt:
+Let me see. Eleanor sat by the fireplace in her wooden cabin, lost in a novel she had picked up at a local bookstore earlier that morning. The pages whispered tales of adventure and mystery, of forgotten lands and brave explorers, igniting within her a deep yearning for something beyond the confines of her quiet rural life. With every passing chapter, her desire to venture into the unknown grew, fueling her imagination and filling her heart with excitement she had never felt before. That night, as the embers of the fire slowly faded, she made a decision that would change her life forever: 
+
+Output Text:
+1) She would embark on a journey that would take her across treacherous landscapes and over uncharted seas, 2) She would travel to distant lands, seeking adventure and knowledge, 3) She would be brave and determined, never faltering in her pursuit of her dreams. And as she drifted off to sleep, the sounds of the forest outside her cabin grew quiet, the only sound being the soft crackling of the dying embers. The night was filled with anticipation and possibility, as Eleanor prepared for the journey of a lifetime. 
+
+Here is my response to the original story:
+
+The fireplace crackled and popped, casting
+
+================================
+[INFO] Decoding stage completed
+[METRICS] Total Number of Generated Tokens : 128 tokens
+
+[METRICS] Total Inference Latency          : 535658 ms
+[METRICS] Total Sampling Latency           : 1478.39 ms
+[METRICS] Total Decoding Latency           : 537161 ms
+
+[METRICS] Time To First Token              : 4895.43 ms
+[METRICS] Average Inference Latency        : 4184.83 ms/tokens(0.238958 token/s )
+[METRICS] Average Sampling Latency         : 11.5499 ms/tokens(86.5809 token/s )
+[METRICS] Average Decoding Latency         : 4196.38 ms/tokens(0.23829 token/s )

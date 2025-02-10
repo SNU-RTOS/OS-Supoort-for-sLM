@@ -1,0 +1,39 @@
+Running scope as unit: run-rd67e90ff2d3541358f510382193300c2.scope
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+[INFO] Preparing Required Components
+
+[INFO] Model Loading took 8 ms
+
+[INFO] Interpreter Building took 658 ms
+normalizer.cc(52) LOG(INFO) precompiled_charsmap is empty. use identity normalization.
+
+[INFO] SentencePiece Loading took 109 ms
+
+[INFO] KV Cache Building took 270 ms
+
+[INFO] LoRA Loading took 0 ms
+
+[INFO] Input Prompt Preparation took 0 ms
+
+[INFO] Signature Runners Preparation took 30 ms
+
+[INFO] Prefill Stage took 10675 ms
+
+Prompt:
+A young boy named Daniel found an old dusty book in his grandmother’s attic. The book was filled with stories of lost treasures, ancient myths, and forgotten civilizations. As he turned the pages, his curiosity grew stronger, and he decided to embark on a journey to uncover the secrets hidden within its fragile pages.
+
+Output Text:
+ Daniel spent hours poring over the book, and soon, he became obsessed with the idea of finding the treasure mentioned in the book. He spent his days searching the woods, the river, and even the local library, but to no avail. One day, while wandering through the woods, Daniel stumbled upon an old, overgrown path he had never seen before. The path was covered in weeds and vines, and it seemed to lead deep into the forest. Daniel felt a shiver run down his spine as he decided to follow the path, despite the doubts that crept into his mind. As he walked, the trees grew taller,
+
+================================
+[INFO] Decoding stage completed
+[METRICS] Total Number of Generated Tokens : 128 tokens
+
+[METRICS] Total Inference Latency          : 523577 ms
+[METRICS] Total Sampling Latency           : 1414.74 ms
+[METRICS] Total Decoding Latency           : 525018 ms
+
+[METRICS] Time To First Token              : 4233.72 ms
+[METRICS] Average Inference Latency        : 4090.44 ms/tokens(0.244472 token/s )
+[METRICS] Average Sampling Latency         : 11.0527 ms/tokens(90.4757 token/s )
+[METRICS] Average Decoding Latency         : 4101.5 ms/tokens(0.243801 token/s )
