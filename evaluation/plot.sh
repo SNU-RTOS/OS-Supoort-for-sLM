@@ -16,6 +16,10 @@ python3.10 show-plot.py \
     --ram-sizes 2G Reordering
 
 python3.10 show-plot.py \
+    --base-dir /home/rtos/workspace/ghpark/LLM-Inference-app/evaluation/RUBIKPi_8G \
+    --ram-sizes T4C4_Naive T4C4_Preload T4C4_NoMmap T4C4_NoMmap_Preload
+
+python3.10 show-plot.py \
     --base-dir /home/rtos/workspace/ghpark/LLM-Inference-app/evaluation/Gemma_Naive_4Thread_4Core \
     --ram-sizes 512M 1G 2G 4G 8G
 

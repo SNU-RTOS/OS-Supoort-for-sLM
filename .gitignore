@@ -7,10 +7,10 @@ __pycache__
 evaluation/*
 !evaluation/plot.sh
 !evaluation/show-plot.py
+result_*
 
 
 ########## Folders ##########
 backup
 log_backup
-
 

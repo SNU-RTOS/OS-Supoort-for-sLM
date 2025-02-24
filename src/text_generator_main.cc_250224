@@ -26,8 +26,9 @@
 #include <stdexcept>
 #include <sys/time.h>
 #include <sys/resource.h>
+#include <set>
 #ifndef __NR_perf_event_open
-#define __NR_perf_event_open 298  // Syscall number for aarch64
+#define __NR_perf_event_open 241  // Syscall number for aarch64
 #endif
 
 
@@ -74,11 +75,11 @@ namespace
         long minor_faults;
         long major_faults;
         double duration_ms;
-
+    
         PageFaultStats(long minor = 0, long major = 0, double dur = 0.0)
             : minor_faults(minor), major_faults(major), duration_ms(dur) {}
     };
-
+    
     class PerfMonitor {
         private:
             struct EventFd {
@@ -87,12 +88,12 @@ namespace
                 std::chrono::steady_clock::time_point start_time;
             };
             std::unordered_map<std::string, EventFd> phase_fds;
-
+            
             static long perf_event_open(struct perf_event_attr* hw_event, pid_t pid,
                                       int cpu, int group_fd, unsigned long flags) {
                 return syscall(__NR_perf_event_open, hw_event, pid, cpu, group_fd, flags);
             }
-
+        
             int setup_page_fault_counter(bool major_fault) {
                 struct perf_event_attr pe;
                 memset(&pe, 0, sizeof(struct perf_event_attr));
@@ -102,57 +103,57 @@ namespace
                 pe.disabled = 1;
                 pe.exclude_kernel = 1;
                 pe.exclude_hv = 1;
-
+        
                 int fd = perf_event_open(&pe, 0, -1, -1, 0);
                 if (fd == -1) {
                     throw std::runtime_error("Error opening perf event");
                 }
                 return fd;
             }
-
+        
         public:
             void start_phase(const std::string& phase_name) {
                 EventFd event_fd;
                 event_fd.fd_minor = setup_page_fault_counter(false);
                 event_fd.fd_major = setup_page_fault_counter(true);
                 event_fd.start_time = std::chrono::steady_clock::now();
-
+        
                 // Start counting
                 ioctl(event_fd.fd_minor, PERF_EVENT_IOC_RESET, 0);
                 ioctl(event_fd.fd_major, PERF_EVENT_IOC_RESET, 0);
                 ioctl(event_fd.fd_minor, PERF_EVENT_IOC_ENABLE, 0);
                 ioctl(event_fd.fd_major, PERF_EVENT_IOC_ENABLE, 0);
-
+        
                 phase_fds[phase_name] = event_fd;
             }
-
+        
             PageFaultStats end_phase(const std::string& phase_name) {
                 auto it = phase_fds.find(phase_name);
                 if (it == phase_fds.end()) {
                     throw std::runtime_error("Phase not found: " + phase_name);
                 }
-
+        
                 auto& event_fd = it->second;
-
+                
                 // Stop counting
                 ioctl(event_fd.fd_minor, PERF_EVENT_IOC_DISABLE, 0);
                 ioctl(event_fd.fd_major, PERF_EVENT_IOC_DISABLE, 0);
-
+        
                 // Read counts
                 long long count_minor, count_major;
                 read(event_fd.fd_minor, &count_minor, sizeof(long long));
                 read(event_fd.fd_major, &count_major, sizeof(long long));
-
+        
                 // Calculate duration
                 auto end_time = std::chrono::steady_clock::now();
                 auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
                     end_time - event_fd.start_time).count();
-
+        
                 // Clean up
                 close(event_fd.fd_minor);
                 close(event_fd.fd_major);
                 phase_fds.erase(it);
-
+        
                 return PageFaultStats{
                     static_cast<long>(count_minor),
                     static_cast<long>(count_major),
@@ -169,11 +170,11 @@ namespace
                 }
                 phase_stats[phase].push_back(stats);
             }
-
+        
             void PrintStats() const {
                 for (const auto& [phase, stats_vec] : phase_stats) {
                     if (stats_vec.empty()) continue;
-
+        
                     std::cout << "\nPhase: " << phase << "\n";
                     if (stats_vec.size() == 1) {
                         const auto& stats = stats_vec[0];
@@ -183,29 +184,28 @@ namespace
                     } else {
                         double avg_duration = 0;
                         long total_minor = 0, total_major = 0;
-                        std::string per_decode = "=== Decoding Result Per Step ===\n";
-                        int i = 0;
+			std::string per_decode = "=== Decoding Result Per Step ===\n";
+			int i = 0;
                         for (const auto& stats : stats_vec) {
                             avg_duration += stats.duration_ms;
                             total_minor += stats.minor_faults;
                             total_major += stats.major_faults;
-                            per_decode += ("Decode step " + std::to_string(i++) + "\n");
-                            per_decode += (" - Major page faults: " + std::to_string(stats.major_faults) + "\n");
-                            per_decode += (" - Minor page faults: " + std::to_string(stats.minor_faults) + "\n");
+			    per_decode += ("Decode step " + std::to_string(i++) + "\n");
+			    per_decode += (" - Major page faults: " + std::to_string(stats.major_faults) + "\n");
                         }
                         avg_duration /= stats_vec.size();
-
+        
                         std::cout << "Number of measurements: " << stats_vec.size() << "\n"
                                     << "Average duration: " << avg_duration << " ms\n"
                                     << "Total minor page faults: " << total_minor << "\n"
                                     << "Total major page faults: " << total_major << "\n"
                                     << "Average minor page faults: " << static_cast<double>(total_minor)/stats_vec.size() << "\n"
                                     << "Average major page faults: " << static_cast<double>(total_major)/stats_vec.size() << "\n"
-                                    << per_decode << std::endl;
+				    << per_decode << std::endl;
                     }
                 }
             }
-
+        
         private:
             std::unordered_map<std::string, std::vector<PageFaultStats>> phase_stats;
         };
@@ -737,57 +737,57 @@ namespace
     void PinFrequentTensors(tflite::Interpreter* interpreter) {
         const tflite::Subgraph& primary_subgraph = interpreter->primary_subgraph();
         const std::vector<int>& execution_plan = primary_subgraph.execution_plan();
-
+        
         // Track tensor access frequency
         std::unordered_map<int, int> tensor_access_count;
         std::unordered_map<int, TfLiteTensor*> tensor_map;
-
+    
         // Count tensor accesses through the execution plan
         for(int node_idx: execution_plan) {
             const auto* node_and_reg = primary_subgraph.node_and_registration(node_idx);
             const TfLiteNode* node = &node_and_reg->first;
-
+    
             // Track input tensors
             for (int i = 0; i < node->inputs->size; ++i) {
                 int tensor_idx = node->inputs->data[i];
                 tensor_access_count[tensor_idx]++;
                 tensor_map[tensor_idx] = interpreter->tensor(tensor_idx);
             }
-
+    
             // Track output tensors
             for (int i = 0; i < node->outputs->size; ++i) {
                 int tensor_idx = node->outputs->data[i];
                 tensor_access_count[tensor_idx]++;
                 tensor_map[tensor_idx] = interpreter->tensor(tensor_idx);
-            }
+	    }
 
-            // Track temporary tensors
-            for (int i = 0; i < node->temporaries->size; ++i) {
-                int tensor_idx = node->temporaries->data[i];
-                tensor_access_count[tensor_idx]++;
-                tensor_map[tensor_idx] = interpreter->tensor(tensor_idx);
-            }
+	    // Track temporary tensors
+	    for (int i = 0; i < node->temporaries->size; ++i) {
+	    	int tensor_idx = node->temporaries->data[i];
+		tensor_access_count[tensor_idx]++;
+		tensor_map[tensor_idx] = interpreter->tensor(tensor_idx);
+	    }
         }
-
+    
         // Pin tensors based on access count threshold
         const int ACCESS_COUNT_THRESHOLD = 2;  // Pin tensors accessed more than twice
         const size_t MAX_TOTAL_SIZE = 1024*1024*1024;  // 1GB maximum total pinned size
-
+        
         size_t total_pinned_size = 0;
         int pinned_count = 0;
-
+    
         for (const auto& [tensor_idx, access_count] : tensor_access_count) {
             // Skip if access count is below threshold
             if (access_count < ACCESS_COUNT_THRESHOLD) {
                 continue;
             }
-
+    
             TfLiteTensor* tensor = tensor_map[tensor_idx];
-
+            
             // Skip if we'd exceed maximum total size
-            if (tensor && tensor->data.raw && tensor->bytes > 0 &&
+            if (tensor && tensor->data.raw && tensor->bytes > 0 && 
                 total_pinned_size + tensor->bytes <= MAX_TOTAL_SIZE) {
-
+    
                 if (mlock(tensor->data.raw, tensor->bytes) == 0) {
                     total_pinned_size += tensor->bytes;
                 } else {
@@ -814,64 +814,64 @@ namespace
         if (!interpreter) {
             return;
         }
-
+        
         // Free any existing buffer before reorganizing
         freeReorganizedTensorBuffer();
-
+        
         const std::vector<int>& execution_plan = interpreter->execution_plan();
         if (execution_plan.empty()) {
             return;
         }
-
+        
         // First pass: calculate total size needed
         size_t total_size = 0;
         for (int node_index : execution_plan) {
             const auto* node_and_reg = interpreter->node_and_registration(node_index);
             if (!node_and_reg) continue;
-
+    
             const TfLiteNode& node = node_and_reg->first;
             if (!node.inputs || !node.inputs->data) continue;
-
+            
             for (int j = 0; j < node.inputs->size; ++j) {
                 int tensor_index = node.inputs->data[j];
                 if (tensor_index < 0) continue;
-
+    
                 TfLiteTensor* tensor = interpreter->tensor(tensor_index);
                 if (!tensor || !tensor->data.raw) continue;
-
+                
                 if (tensor->allocation_type != kTfLiteMmapRo) continue;
-
+                
                 total_size += tensor->bytes;
             }
         }
-
+        
         if (total_size == 0) return;
-
+        
         try {
             g_combined_buffer = std::make_unique<uint8_t[]>(total_size);
             g_buffer_size = total_size;
         } catch (const std::bad_alloc&) {
             return;
         }
-
+        
         // Second pass: copy tensors and update addresses
         size_t current_offset = 0;
         for (int node_index : execution_plan) {
             const auto* node_and_reg = interpreter->node_and_registration(node_index);
             if (!node_and_reg) continue;
-
+    
             const TfLiteNode& node = node_and_reg->first;
             if (!node.inputs || !node.inputs->data) continue;
-
+            
             for (int j = 0; j < node.inputs->size; ++j) {
                 int tensor_index = node.inputs->data[j];
                 if (tensor_index < 0) continue;
-
+    
                 TfLiteTensor* tensor = interpreter->tensor(tensor_index);
                 if (!tensor || !tensor->data.raw) continue;
-
+                
                 if (tensor->allocation_type != kTfLiteMmapRo) continue;
-
+                
                 // Copy data and update pointer
                 std::memcpy(g_combined_buffer.get() + current_offset,
                            tensor->data.raw,
@@ -909,12 +909,12 @@ namespace
         double sys_time_end    = toSeconds(usage_end.ru_stime);
         double cpu_time_sec = (user_time_end - user_time_start)
                                 + (sys_time_end - sys_time_start);
-            double user_time_sec = (user_time_end - user_time_start);
-            double sys_time_sec = (sys_time_end - sys_time_start);
+	    double user_time_sec = (user_time_end - user_time_start);
+	    double sys_time_sec = (sys_time_end - sys_time_start);
         std::cout << phase_name << " took \n- "
             << cpu_time_sec << " [sec] CPU time\n- "
-               << user_time_sec << " [sec] User time\n- "
-               << sys_time_sec << " [sec] System time" << std::endl;
+	       << user_time_sec << " [sec] User time\n- "
+	       << sys_time_sec << " [sec] System time" << std::endl;
     }
 
     void PrintRUsageRecords(const std::vector<RUsageRecord>& records) {
@@ -923,63 +923,222 @@ namespace
         }
     }
 
-    void uploadTensorsForSubgraph(tflite::Interpreter* interpreter, int subgraph_idx) {
-        if (!interpreter) return;
+    void AnalyzeDelegateExecution(tflite::Interpreter* interpreter) {
+        // Lambda function to print tensor details
+        auto print_tensor_details = [](int tensor_idx, TfLiteTensor* tensor) {
+            if (!tensor) {
+                std::cout << "Tensor " << tensor_idx << " is NULL\n";
+                return;
+            }
+            
+            // std::cout << "Tensor: " << tensor_idx << " ";
+            
+            void* tensor_data_address = tensor->data.raw;
+            std::cout << "Data Address: " << tensor_data_address << " ";
 
-        // Get the specific subgraph
-        const tflite::Subgraph& subgraph = (subgraph_idx == 0) ?
-        interpreter->primary_subgraph() :
-        *interpreter->subgraph(subgraph_idx);
+            // Tensor Type
+            const char* type_name = TfLiteTypeGetName(tensor->type);
+            std::cout << "Type: " << (type_name ? type_name : "Unknown") << " ";
 
-        const std::vector<int>& execution_plan = subgraph.execution_plan();
-        std::unordered_set<int> seen_tensors;
+            // Tensor Allocation Type
+            std::cout << "Allocation Type: ";
+            switch (tensor->allocation_type) {
+                case kTfLiteArenaRw:
+                    std::cout << "Arena RW " << "Bytes: " << tensor->bytes << " ";
+                    break;
+                case kTfLiteArenaRwPersistent:
+                    std::cout << "Arena Persistent " << "Bytes: " << tensor->bytes << " ";
+                    break;
+                case kTfLiteMmapRo:
+                    std::cout << "Mmap " << "Bytes: " << tensor->bytes << " ";
+                    break;
+                case kTfLiteDynamic:
+                    std::cout << "Dynamic " << "Bytes: " << tensor->bytes << " ";
+                    break;
+                case kTfLiteCustom:
+                    std::cout << "Custom " << "Bytes: " << tensor->bytes << " ";
+                    break;
+                case kTfLitePersistentRo:
+                    std::cout << "PersistentRo " << "Bytes: " << tensor->bytes << " ";
+                    break;
+                case kTfLiteVariantObject:
+                    std::cout << "Variant " << "Bytes: " << tensor->bytes << " ";
+                    break;
+                case kTfLiteMemNone:
+                    std::cout << "MemNone " << "Bytes: 0 ";
+                    break;
+                default:
+                    std::cout << "Unknown " << "Bytes: 0 ";
+                    break;
+            }
 
-        std::cout << "Touching tensors for subgraph " << subgraph_idx << "\n";
-
+            // Tensor Shape
+            std::cout << "Shape: [";
+            if(tensor->dims && tensor->dims->size > 0){
+                for (int dim_idx = 0; dim_idx < tensor->dims->size; ++dim_idx) {
+                    std::cout << tensor->dims->data[dim_idx];
+                    if (dim_idx < tensor->dims->size - 1) std::cout << ", ";
+                }
+            }
+            std::cout << "]\n";
+        };
+        
+        std::cout << "\n=== Delegate Execution Analysis ===\n";
+        std::cout << "===================================\n";
+    
+        // Analyze the primary subgraph's execution plan
+        const tflite::Subgraph& primary_subgraph = interpreter->primary_subgraph();
+        // std::cout <<  "Subgraph Name: " << primary_subgraph.name_ << std::endl;
+        const std::vector<int>& execution_plan = primary_subgraph.execution_plan();
+    
+        std::vector<int> delegated_nodes;
+        std::vector<int> non_delegated_nodes;
+    
         for (int node_idx : execution_plan) {
-            const auto* node_and_reg = subgraph.node_and_registration(node_idx);
+            const auto* node_and_reg = primary_subgraph.node_and_registration(node_idx);
             const TfLiteNode* node = &node_and_reg->first;
-
-            // Touch input tensors
-            for (int i = 0; i < node->inputs->size; ++i) {
-                int tensor_idx = node->inputs->data[i];
-                if (tensor_idx < 0 || seen_tensors.count(tensor_idx)) continue;
-
-                TfLiteTensor* tensor = interpreter->tensor(tensor_idx);
-                if (tensor && tensor->data.raw) {
-                    volatile char dummy = *reinterpret_cast<char*>(tensor->data.raw);
-                    (void)dummy;
-                }
-                seen_tensors.insert(tensor_idx);
-            }
-
-            // Touch output tensors
-            for (int i = 0; i < node->outputs->size; ++i) {
-                int tensor_idx = node->outputs->data[i];
-                if (tensor_idx < 0 || seen_tensors.count(tensor_idx)) continue;
-
-                TfLiteTensor* tensor = interpreter->tensor(tensor_idx);
-                if (tensor && tensor->data.raw) {
-                    volatile char dummy = *reinterpret_cast<char*>(tensor->data.raw);
-                    (void)dummy;
-                }
-                seen_tensors.insert(tensor_idx);
-            }
-
-            // Touch temporary tensors
-            for (int i = 0; i < node->temporaries->size; ++i) {
-                int tensor_idx = node->temporaries->data[i];
-                if (tensor_idx < 0 || seen_tensors.count(tensor_idx)) continue;
-
-                TfLiteTensor* tensor = interpreter->tensor(tensor_idx);
-                if (tensor && tensor->data.raw) {
-                    volatile char dummy = *reinterpret_cast<char*>(tensor->data.raw);
-                    (void)dummy;
-                }
-                seen_tensors.insert(tensor_idx);
+            
+            if (node->delegate) {
+                delegated_nodes.push_back(node_idx);
+            } else {
+                non_delegated_nodes.push_back(node_idx);
             }
         }
-        std::cout << "Touched " << seen_tensors.size() << " tensors in subgraph " << subgraph_idx << "\n";
+    
+        //std::cout << "Delegate Analysis:\n";
+        std::cout << "  Total Nodes: " << execution_plan.size() << "\n";
+        std::cout << "  Delegated Nodes: " << delegated_nodes.size() << "\n";
+        std::cout << "  Non-Delegated Nodes: " << non_delegated_nodes.size() << "\n";
+        int num_input_tensors = 0;
+        int num_output_tensors = 0;
+        int num_intermediate_tensors = 0;
+        int num_temporary_tensors = 0;
+        int num_total_tensors = 0;
+
+        // Detailed node analysis based on execution order
+        std::cout << "=== Node Details ===" << std::endl;
+        for(int node_idx: execution_plan) {
+            const auto* node_and_reg = primary_subgraph.node_and_registration(node_idx);
+            const TfLiteNode* node = &node_and_reg->first;
+            const TfLiteRegistration& registration = node_and_reg->second;
+
+            std::cout << "  Node " << node_idx << ":\n";
+            std::cout << "    Operator: " 
+                      << (registration.builtin_code ? 
+                          tflite::EnumNameBuiltinOperator(static_cast<tflite::BuiltinOperator>(registration.builtin_code)) 
+                          : "Custom Operator") 
+                      << "\n";
+            // Print Input Tensor Indices
+            std::cout << "    Input Tensors:\n";
+            for (int i = 0; i < node->inputs->size; ++i) {
+                // 여기서 allocation type하고 address 찍을 수 있을 것 같은데 allocate 한 뒤에 찍어보면
+                
+                std::cout << "      Input " << i << ": " << node->inputs->data[i] << " ";
+                
+                uint32_t tensor_idx = node->inputs->data[i];
+                auto* tensor = interpreter->tensor(tensor_idx);
+                print_tensor_details(tensor_idx, tensor);
+                
+                ++num_input_tensors;
+            }
+            
+            // Print Output Tensor Indices
+            std::cout << "    Output Tensors:\n";
+            for (int i = 0; i < node->outputs->size; ++i) {
+                std::cout << "      Output " << i << ": " << node->outputs->data[i] << " ";
+
+                uint32_t tensor_idx = node->outputs->data[i];
+                auto* tensor = interpreter->tensor(tensor_idx);
+                print_tensor_details(tensor_idx, tensor);
+
+                ++num_output_tensors;
+            }
+            
+            // Print Intermediate Tensor Indices
+            std::cout << "    Intermediate Tensors:\n";
+            for (int i = 0; i < node->intermediates->size; ++i) {
+                std::cout << "      Intermediate " << i << ": " << node->intermediates->data[i] << " ";
+
+                uint32_t tensor_idx = node->intermediates->data[i];
+                auto* tensor = interpreter->tensor(tensor_idx);
+                print_tensor_details(tensor_idx, tensor);
+
+                ++num_intermediate_tensors;
+            }
+            
+            // Print Temporary Tensor Indices
+            std::cout << "    Temporary Tensors:\n";
+            for (int i = 0; i < node->temporaries->size; ++i) {
+                std::cout << "      Temporary " << i << ": " << node->temporaries->data[i] << " ";
+
+                uint32_t tensor_idx = node->temporaries->data[i];
+                auto* tensor = interpreter->tensor(tensor_idx);
+                print_tensor_details(tensor_idx, tensor);
+
+                ++num_temporary_tensors;
+            }
+        }
+    }
+    // 각 signature(stage)의 노드들을 순회하며 사용하는 텐서 인덱스를 기록하는 함수
+    void CompareSubgraph0And5(tflite::Interpreter* interpreter) {
+        tflite::Subgraph* subgraph0 = interpreter->subgraph(0);
+        tflite::Subgraph* subgraph5 = interpreter->subgraph(5);
+      
+        std::set<const void*> tensorAddrs0;
+        std::set<const void*> tensorAddrs5;
+      
+        // Lambda: 주어진 subgraph에서 tensor->data.raw 주소를 수집
+        auto collectTensorAddresses = [](tflite::Subgraph* sg, std::set<const void*>& addrs) {
+        for (int node_idx : sg->execution_plan()) {
+            const auto* node_and_reg = sg->node_and_registration(node_idx);
+            const TfLiteNode* node = &node_and_reg->first;
+            // 입력 텐서
+            for (int j = 0; j < node->inputs->size; ++j) {
+              int tid = node->inputs->data[j];
+              if (tid < 0) continue;
+              TfLiteTensor* tensor = sg->tensor(tid);
+              if (tensor && tensor->data.raw)
+                addrs.insert(static_cast<const void*>(tensor->data.raw));
+            }
+            // 출력 텐서
+            for (int j = 0; j < node->outputs->size; ++j) {
+              int tid = node->outputs->data[j];
+              if (tid < 0) continue;
+              TfLiteTensor* tensor = sg->tensor(tid);
+              if (tensor && tensor->data.raw)
+                addrs.insert(static_cast<const void*>(tensor->data.raw));
+            }
+            // 임시 텐서
+            for (int j = 0; j < node->temporaries->size; ++j) {
+              int tid = node->temporaries->data[j];
+              if (tid < 0) continue;
+              TfLiteTensor* tensor = sg->tensor(tid);
+              if (tensor && tensor->data.raw)
+                addrs.insert(static_cast<const void*>(tensor->data.raw));
+            }
+            // 중간 계산용(intermediate) 텐서
+            for (int j = 0; j < node->intermediates->size; ++j) {
+              int tid = node->intermediates->data[j];
+              if (tid < 0) continue;
+              TfLiteTensor* tensor = sg->tensor(tid);
+              if (tensor && tensor->data.raw)
+                addrs.insert(static_cast<const void*>(tensor->data.raw));
+            }
+          }
+        };
+      
+        collectTensorAddresses(subgraph0, tensorAddrs0);
+        collectTensorAddresses(subgraph5, tensorAddrs5);
+      
+        std::cout << "Subgraph 0 tensor addresses count: " << tensorAddrs0.size() << "\n";
+        std::cout << "Subgraph 5 tensor addresses count: " << tensorAddrs5.size() << "\n";
+      
+        // 두 집합 간 공통 텐서 주소 계산
+        std::set<const void*> common;
+        std::set_intersection(tensorAddrs0.begin(), tensorAddrs0.end(),
+                              tensorAddrs5.begin(), tensorAddrs5.end(),
+                              std::inserter(common, common.begin()));
+        std::cout << "Common tensor addresses count: " << common.size() << "\n";
     }
 
 } // end anonymous namespace
@@ -1032,38 +1191,22 @@ int main(int argc, char *argv[])
         interpreter = BuildInterpreter(model.get(), absl::GetFlag(FLAGS_num_threads));
         stats = perf_monitor.end_phase("Build_Interperter");
         getrusage(RUSAGE_SELF, &usage_end);
+        // reorderTensorSimple(interpreter);
     }
     PrintRUsage(usage_start, usage_end, "Interpreter Building");
     metrics.RecordStats("Build_Interpreter", stats);
 
-    // Tensor upload before prefill
-    {
-        ScopeTimer timer("Tensor Uploading");
-        getrusage(RUSAGE_SELF, &usage_start);
-        perf_monitor.start_phase("Upload_Tensor");
-
-        // Uploading Here
-        // uploadTensorsForSubgraph(interpreter.get(), 0);
-        // uploadTensorsForSubgraph(interpreter.get(), 5);
-
-        stats = perf_monitor.end_phase("Upload_Tensor");
-        getrusage(RUSAGE_SELF, &usage_end);
-    }
-    PrintRUsage(usage_start, usage_end, "Tensor Uploading");
-    metrics.RecordStats("Upload_Tensor", stats);
-
-
     // Tensor Reordering
-    {
-        ScopeTimer timer("Tensor Reordering");
-        getrusage(RUSAGE_SELF, &usage_start);
-        perf_monitor.start_phase("Reorder_Tensor");
-        // reorderTensorSimple(interpreter);
-        stats = perf_monitor.end_phase("Reorder_Tensor");
-        getrusage(RUSAGE_SELF, &usage_end);
-    }
-    PrintRUsage(usage_start, usage_end, "Tensor Reordering");
-    metrics.RecordStats("Reorder_Tensor", stats);
+    // {
+    //     ScopeTimer timer("Tensor Reordering");
+    //     getrusage(RUSAGE_SELF, &usage_start);
+    //     perf_monitor.start_phase("Reorder_Tensor");
+    //     // reorderTensorSimple(interpreter);
+    //     stats = perf_monitor.end_phase("Reorder_Tensor");
+    //     getrusage(RUSAGE_SELF, &usage_end);
+    // }
+    // PrintRUsage(usage_start, usage_end, "Tensor Reordering");
+    // metrics.RecordStats("Reorder_Tensor", stats);
 
     // 3. Load SentencePiece
     {
@@ -1145,27 +1288,32 @@ int main(int argc, char *argv[])
         // std::cout << "HELLO4";
         MINIMAL_CHECK(decode_runner != nullptr);
         // std::cout << "HELLO3";
-
+        
         stats = perf_monitor.end_phase("Prepare_Runners");
         getrusage(RUSAGE_SELF, &usage_end);
     }
     PrintRUsage(usage_start, usage_end, "Signature Runner Preparation");
     metrics.RecordStats("Prepare_Runners", stats);
 
-    // Pinning frequently used Tensors
     {
-        ScopeTimer timer("Tensor Pinning");
-        getrusage(RUSAGE_SELF, &usage_start);
-        perf_monitor.start_phase("Pin_Tensors");
-
-        // PinFrequentTensors(interpreter.get());
-
-        stats = perf_monitor.end_phase("Pin_Tensors");
-        getrusage(RUSAGE_SELF, &usage_end);
+        ScopeTimer timer("Model Analysis");
+        AnalyzeDelegateExecution(interpreter.get());
     }
-    PrintRUsage(usage_start, usage_end, "Tensor Pinning");
-    metrics.RecordStats("Pin_Tensors", stats);
 
+    // Pinning frequently used Tensors
+    // {
+    //     ScopeTimer timer("Tensor Pinning");
+    //     getrusage(RUSAGE_SELF, &usage_start);
+    //     perf_monitor.start_phase("Pin_Tensors");
+
+    //     // PinFrequentTensors(interpreter.get());
+
+    //     stats = perf_monitor.end_phase("Pin_Tensors");
+    //     getrusage(RUSAGE_SELF, &usage_end);
+    // }
+    // PrintRUsage(usage_start, usage_end, "Tensor Pinning");
+    // metrics.RecordStats("Pin_Tensors", stats);
+    
 
     // 8. Access Tensors
     TfLiteTensor *prefill_input = prefill_runner->input_tensor("tokens");
@@ -1177,6 +1325,8 @@ int main(int argc, char *argv[])
     int max_seq_size = prefill_input->dims->data[1];
     int kv_cache_max_size = kv_cache_k_0->dims->data[1];
 
+    CompareSubgraph0And5(interpreter.get());
+    
     // 9. Prefill Stage
     {
         ScopeTimer timer("Prefill Stage");
@@ -1187,7 +1337,7 @@ int main(int argc, char *argv[])
         // Zero out the input tensors
         std::memset(prefill_input->data.i32, 0, prefill_input->bytes);
         std::memset(prefill_input_pos->data.i32, 0, prefill_input_pos->bytes);
-
+        
         // Prefill uses all but the last token from the prompt
         for (int i = 0; i < prefill_seq_size - 1; ++i)
         {
@@ -1195,7 +1345,7 @@ int main(int argc, char *argv[])
             prefill_input_pos->data.i32[i] = i;
         }
 
-
+        
         // Execute the prefill runner
         MINIMAL_CHECK(prefill_runner->Invoke() == kTfLiteOk);
         stats = perf_monitor.end_phase("Prefill");
@@ -1231,6 +1381,7 @@ int main(int argc, char *argv[])
         int next_position = prefill_seq_size - 1;
 
         // Decoding loop
+        // Decoding loop
         for (int i = 0; i < decode_steps; ++i)
         {
             // Start time for this token
@@ -1242,11 +1393,9 @@ int main(int argc, char *argv[])
             // 1) Model Inference
             // -----------------------
             auto inference_start = std::chrono::high_resolution_clock::now();
-
             decode_input->data.i32[0] = next_token;
             decode_input_pos->data.i32[0] = next_position;
             MINIMAL_CHECK(decode_runner->Invoke() == kTfLiteOk);
-
             auto inference_end = std::chrono::high_resolution_clock::now();
             double inference_time_ms =
                 std::chrono::duration<double, std::milli>(inference_end - inference_start).count();
@@ -1283,6 +1432,7 @@ int main(int argc, char *argv[])
             metrics.RecordStats("Decode", decode_stats);
             rusageRecords.push_back(decode_record);
         }
+
     }
 
     // 11. Print decoding metrics (inference vs. sampling)
