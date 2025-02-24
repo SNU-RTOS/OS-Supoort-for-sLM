@@ -1,2 +1,16 @@
+
+########## Cache files ##########
 *.bin
+__pycache__
+
+########## User files ##########
+evaluation/*
+!evaluation/plot.sh
+!evaluation/show-plot.py
+
+
+########## Folders ##########
 backup
+log_backup
+
+

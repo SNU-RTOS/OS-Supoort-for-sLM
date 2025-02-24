@@ -43,6 +43,9 @@ cc_binary(
     srcs = [
         "text_generator_main.cc",
     ],
+    defines = [
+        "TF_LITE_TENSORFLOW_PROFILER", 
+    ],
     linkopts = tflite_linkopts() + select({
         "@org_tensorflow//tensorflow:android": [
             "-pie",  # Android 5.0 and later supports only PIE
@@ -63,3 +66,5 @@ cc_binary(
         "@org_tensorflow//tensorflow/lite/kernels:builtin_ops",
     ],
 )
+
+# "@org_tensorflow//tensorflow/lite/profiling:profiler", if profiler is needed

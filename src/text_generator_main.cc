@@ -14,8 +14,24 @@
 #include <vector>
 #include <chrono>
 #include <random>
-#include <iostream> // std::cout, std::endl
 
+// included by nclee
+#include <iostream>
+#include <sys/mman.h>
+#include <linux/perf_event.h>  // For perf_event_attr and PERF_* constants
+#include <sys/syscall.h>       // For syscall and __NR_perf_event_open
+#include <unistd.h>           // For syscall wrapper and pid_t
+#include <sys/ioctl.h>
+#include <unordered_map>
+#include <stdexcept>
+#include <sys/time.h>
+#include <sys/resource.h>
+#ifndef __NR_perf_event_open
+#define __NR_perf_event_open 241  // Syscall number for aarch64
+#endif
+
+
+// AI EDGE TORCH
 #include "absl/flags/flag.h"
 #include "absl/flags/parse.h"
 #include "absl/strings/match.h"
@@ -52,6 +68,146 @@ namespace
 
     using ai_edge_torch::examples::AlignedAllocator;
     using ai_edge_torch::examples::LoRA;
+
+    // Class for pagefault measurement
+    struct PageFaultStats {
+        long minor_faults;
+        long major_faults;
+        double duration_ms;
+    
+        PageFaultStats(long minor = 0, long major = 0, double dur = 0.0)
+            : minor_faults(minor), major_faults(major), duration_ms(dur) {}
+    };
+    
+    class PerfMonitor {
+        private:
+            struct EventFd {
+                int fd_minor;
+                int fd_major;
+                std::chrono::steady_clock::time_point start_time;
+            };
+            std::unordered_map<std::string, EventFd> phase_fds;
+            
+            static long perf_event_open(struct perf_event_attr* hw_event, pid_t pid,
+                                      int cpu, int group_fd, unsigned long flags) {
+                return syscall(__NR_perf_event_open, hw_event, pid, cpu, group_fd, flags);
+            }
+        
+            int setup_page_fault_counter(bool major_fault) {
+                struct perf_event_attr pe;
+                memset(&pe, 0, sizeof(struct perf_event_attr));
+                pe.type = PERF_TYPE_SOFTWARE;
+                pe.size = sizeof(struct perf_event_attr);
+                pe.config = major_fault ? PERF_COUNT_SW_PAGE_FAULTS_MAJ : PERF_COUNT_SW_PAGE_FAULTS_MIN;
+                pe.disabled = 1;
+                pe.exclude_kernel = 1;
+                pe.exclude_hv = 1;
+        
+                int fd = perf_event_open(&pe, 0, -1, -1, 0);
+                if (fd == -1) {
+                    throw std::runtime_error("Error opening perf event");
+                }
+                return fd;
+            }
+        
+        public:
+            void start_phase(const std::string& phase_name) {
+                EventFd event_fd;
+                event_fd.fd_minor = setup_page_fault_counter(false);
+                event_fd.fd_major = setup_page_fault_counter(true);
+                event_fd.start_time = std::chrono::steady_clock::now();
+        
+                // Start counting
+                ioctl(event_fd.fd_minor, PERF_EVENT_IOC_RESET, 0);
+                ioctl(event_fd.fd_major, PERF_EVENT_IOC_RESET, 0);
+                ioctl(event_fd.fd_minor, PERF_EVENT_IOC_ENABLE, 0);
+                ioctl(event_fd.fd_major, PERF_EVENT_IOC_ENABLE, 0);
+        
+                phase_fds[phase_name] = event_fd;
+            }
+        
+            PageFaultStats end_phase(const std::string& phase_name) {
+                auto it = phase_fds.find(phase_name);
+                if (it == phase_fds.end()) {
+                    throw std::runtime_error("Phase not found: " + phase_name);
+                }
+        
+                auto& event_fd = it->second;
+                
+                // Stop counting
+                ioctl(event_fd.fd_minor, PERF_EVENT_IOC_DISABLE, 0);
+                ioctl(event_fd.fd_major, PERF_EVENT_IOC_DISABLE, 0);
+        
+                // Read counts
+                long long count_minor, count_major;
+                read(event_fd.fd_minor, &count_minor, sizeof(long long));
+                read(event_fd.fd_major, &count_major, sizeof(long long));
+        
+                // Calculate duration
+                auto end_time = std::chrono::steady_clock::now();
+                auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    end_time - event_fd.start_time).count();
+        
+                // Clean up
+                close(event_fd.fd_minor);
+                close(event_fd.fd_major);
+                phase_fds.erase(it);
+        
+                return PageFaultStats{
+                    static_cast<long>(count_minor),
+                    static_cast<long>(count_major),
+                    static_cast<double>(duration)
+                };
+            }
+        };
+
+    class PageFaultMetrics {
+        public:
+            void RecordStats(const std::string& phase, const PageFaultStats& stats) {
+                if (phase_stats.find(phase) == phase_stats.end()) {
+                    phase_stats[phase] = std::vector<PageFaultStats>();
+                }
+                phase_stats[phase].push_back(stats);
+            }
+        
+            void PrintStats() const {
+                for (const auto& [phase, stats_vec] : phase_stats) {
+                    if (stats_vec.empty()) continue;
+        
+                    std::cout << "\nPhase: " << phase << "\n";
+                    if (stats_vec.size() == 1) {
+                        const auto& stats = stats_vec[0];
+                        std::cout << "Duration: " << stats.duration_ms << " ms\n"
+                                    << "Minor page faults: " << stats.minor_faults << "\n"
+                                    << "Major page faults: " << stats.major_faults << "\n";
+                    } else {
+                        double avg_duration = 0;
+                        long total_minor = 0, total_major = 0;
+			std::string per_decode = "=== Decoding Result Per Step ===\n";
+			int i = 0;
+                        for (const auto& stats : stats_vec) {
+                            avg_duration += stats.duration_ms;
+                            total_minor += stats.minor_faults;
+                            total_major += stats.major_faults;
+			    per_decode += ("Decode step " + std::to_string(i++) + "\n");
+			    per_decode += (" - Major page faults: " + std::to_string(stats.major_faults) + "\n");
+                        }
+                        avg_duration /= stats_vec.size();
+        
+                        std::cout << "Number of measurements: " << stats_vec.size() << "\n"
+                                    << "Average duration: " << avg_duration << " ms\n"
+                                    << "Total minor page faults: " << total_minor << "\n"
+                                    << "Total major page faults: " << total_major << "\n"
+                                    << "Average minor page faults: " << static_cast<double>(total_minor)/stats_vec.size() << "\n"
+                                    << "Average major page faults: " << static_cast<double>(total_major)/stats_vec.size() << "\n"
+				    << per_decode << std::endl;
+                    }
+                }
+            }
+        
+        private:
+            std::unordered_map<std::string, std::vector<PageFaultStats>> phase_stats;
+        };
 
     // --------------------------------------------------------------------------
     // A scoped timer that prints the elapsed time when going out of scope
@@ -412,7 +568,7 @@ namespace
     std::unique_ptr<tflite::FlatBufferModel> LoadModel()
     {
         std::unique_ptr<tflite::FlatBufferModel> model =
-            tflite::FlatBufferModel::BuildFromFile(absl::GetFlag(FLAGS_tflite_model).c_str(), nullptr);
+            tflite::FlatBufferModel::BuildFromFile(absl::GetFlag(FLAGS_tflite_model).c_str());
         MINIMAL_CHECK(model != nullptr);
         return model;
     }
@@ -420,26 +576,14 @@ namespace
     // --------------------------------------------------------------------------
     // Builds a TFLite interpreter from the model and applies XNNPACK if requested
     // --------------------------------------------------------------------------
-
     std::unique_ptr<tflite::Interpreter>
     BuildInterpreter(tflite::FlatBufferModel *model, int num_threads)
     {
-        // XNNPACK 포함 여부에 따라 Resolver 선택
-        std::unique_ptr<tflite::ops::builtin::BuiltinOpResolver> resolver;
-
-        if (!absl::GetFlag(FLAGS_weight_cache_path).empty())
-        {
-            resolver = std::make_unique<tflite::ops::builtin::BuiltinOpResolverWithXNNPACK>();
-        }
-        else
-        {
-            resolver = std::make_unique<tflite::ops::builtin::BuiltinOpResolverWithoutDefaultDelegates>();
-        }
-
+        tflite::ops::builtin::BuiltinOpResolver resolver;
         // Register GenAI custom ops
-        tflite::ops::custom::GenAIOpsRegisterer(resolver.get());
+        tflite::ops::custom::GenAIOpsRegisterer(&resolver);
 
-        tflite::InterpreterBuilder builder(*model, *resolver);
+        tflite::InterpreterBuilder builder(*model, resolver);
         MINIMAL_CHECK(builder.SetNumThreads(num_threads) == kTfLiteOk);
 
         std::unique_ptr<tflite::Interpreter> interpreter;
@@ -589,6 +733,369 @@ namespace
         return processor;
     }
 
+    void PinFrequentTensors(tflite::Interpreter* interpreter) {
+        const tflite::Subgraph& primary_subgraph = interpreter->primary_subgraph();
+        const std::vector<int>& execution_plan = primary_subgraph.execution_plan();
+        
+        // Track tensor access frequency
+        std::unordered_map<int, int> tensor_access_count;
+        std::unordered_map<int, TfLiteTensor*> tensor_map;
+    
+        // Count tensor accesses through the execution plan
+        for(int node_idx: execution_plan) {
+            const auto* node_and_reg = primary_subgraph.node_and_registration(node_idx);
+            const TfLiteNode* node = &node_and_reg->first;
+    
+            // Track input tensors
+            for (int i = 0; i < node->inputs->size; ++i) {
+                int tensor_idx = node->inputs->data[i];
+                tensor_access_count[tensor_idx]++;
+                tensor_map[tensor_idx] = interpreter->tensor(tensor_idx);
+            }
+    
+            // Track output tensors
+            for (int i = 0; i < node->outputs->size; ++i) {
+                int tensor_idx = node->outputs->data[i];
+                tensor_access_count[tensor_idx]++;
+                tensor_map[tensor_idx] = interpreter->tensor(tensor_idx);
+	    }
+
+	    // Track temporary tensors
+	    for (int i = 0; i < node->temporaries->size; ++i) {
+	    	int tensor_idx = node->temporaries->data[i];
+		tensor_access_count[tensor_idx]++;
+		tensor_map[tensor_idx] = interpreter->tensor(tensor_idx);
+	    }
+        }
+    
+        // Pin tensors based on access count threshold
+        const int ACCESS_COUNT_THRESHOLD = 2;  // Pin tensors accessed more than twice
+        const size_t MAX_TOTAL_SIZE = 1024*1024*1024;  // 1GB maximum total pinned size
+        
+        size_t total_pinned_size = 0;
+        int pinned_count = 0;
+    
+        for (const auto& [tensor_idx, access_count] : tensor_access_count) {
+            // Skip if access count is below threshold
+            if (access_count < ACCESS_COUNT_THRESHOLD) {
+                continue;
+            }
+    
+            TfLiteTensor* tensor = tensor_map[tensor_idx];
+            
+            // Skip if we'd exceed maximum total size
+            if (tensor && tensor->data.raw && tensor->bytes > 0 && 
+                total_pinned_size + tensor->bytes <= MAX_TOTAL_SIZE) {
+    
+                if (mlock(tensor->data.raw, tensor->bytes) == 0) {
+                    total_pinned_size += tensor->bytes;
+                } else {
+                    std::cerr << strerror(errno) << "\n";
+                }
+            }
+        }
+    }
+
+    ////// Memory Reordering
+    std::unique_ptr<uint8_t[]> g_combined_buffer = nullptr;
+    size_t g_buffer_size = 0;
+
+    // Function to free the global buffer if needed
+    void freeReorganizedTensorBuffer() {
+        if (g_combined_buffer) {
+            g_combined_buffer.reset();
+            g_buffer_size = 0;
+            // std::cout << "Freed reorganized tensor buffer\n";
+        }
+    }
+
+    void reorderTensorSimple(std::unique_ptr<tflite::Interpreter>& interpreter) {
+        if (!interpreter) {
+            return;
+        }
+        
+        // Free any existing buffer before reorganizing
+        freeReorganizedTensorBuffer();
+        
+        const std::vector<int>& execution_plan = interpreter->execution_plan();
+        if (execution_plan.empty()) {
+            return;
+        }
+        
+        // First pass: calculate total size needed
+        size_t total_size = 0;
+        for (int node_index : execution_plan) {
+            const auto* node_and_reg = interpreter->node_and_registration(node_index);
+            if (!node_and_reg) continue;
+    
+            const TfLiteNode& node = node_and_reg->first;
+            if (!node.inputs || !node.inputs->data) continue;
+            
+            for (int j = 0; j < node.inputs->size; ++j) {
+                int tensor_index = node.inputs->data[j];
+                if (tensor_index < 0) continue;
+    
+                TfLiteTensor* tensor = interpreter->tensor(tensor_index);
+                if (!tensor || !tensor->data.raw) continue;
+                
+                if (tensor->allocation_type != kTfLiteMmapRo) continue;
+                
+                total_size += tensor->bytes;
+            }
+        }
+        
+        if (total_size == 0) return;
+        
+        try {
+            g_combined_buffer = std::make_unique<uint8_t[]>(total_size);
+            g_buffer_size = total_size;
+        } catch (const std::bad_alloc&) {
+            return;
+        }
+        
+        // Second pass: copy tensors and update addresses
+        size_t current_offset = 0;
+        for (int node_index : execution_plan) {
+            const auto* node_and_reg = interpreter->node_and_registration(node_index);
+            if (!node_and_reg) continue;
+    
+            const TfLiteNode& node = node_and_reg->first;
+            if (!node.inputs || !node.inputs->data) continue;
+            
+            for (int j = 0; j < node.inputs->size; ++j) {
+                int tensor_index = node.inputs->data[j];
+                if (tensor_index < 0) continue;
+    
+                TfLiteTensor* tensor = interpreter->tensor(tensor_index);
+                if (!tensor || !tensor->data.raw) continue;
+                
+                if (tensor->allocation_type != kTfLiteMmapRo) continue;
+                
+                // Copy data and update pointer
+                std::memcpy(g_combined_buffer.get() + current_offset,
+                           tensor->data.raw,
+                           tensor->bytes);
+                tensor->data.raw = reinterpret_cast<char*>(g_combined_buffer.get() + current_offset);
+                current_offset += tensor->bytes;
+            }
+        }
+    }
+
+    // Optional: Function to get the current buffer size
+    size_t getReorganizedBufferSize() {
+        return g_buffer_size;
+    }
+
+    // Optional: Function to check if buffer is allocated
+    bool isBufferAllocated() {
+        return g_combined_buffer != nullptr;
+    }
+
+    // RUSAGE
+    struct RUsageRecord {
+        rusage start;
+        rusage end;
+    };
+
+    double toSeconds(const struct timeval& tv) {
+        return (double)tv.tv_sec + (double)tv.tv_usec / 1e6;
+    }
+
+    void PrintRUsage(rusage usage_start, rusage usage_end, const std::string phase_name) {
+        double user_time_start = toSeconds(usage_start.ru_utime);
+        double user_time_end   = toSeconds(usage_end.ru_utime);
+        double sys_time_start  = toSeconds(usage_start.ru_stime);
+        double sys_time_end    = toSeconds(usage_end.ru_stime);
+        double cpu_time_sec = (user_time_end - user_time_start)
+                                + (sys_time_end - sys_time_start);
+	    double user_time_sec = (user_time_end - user_time_start);
+	    double sys_time_sec = (sys_time_end - sys_time_start);
+        std::cout << phase_name << " took \n- "
+            << cpu_time_sec << " [sec] CPU time\n- "
+	       << user_time_sec << " [sec] User time\n- "
+	       << sys_time_sec << " [sec] System time" << std::endl;
+    }
+
+    void PrintRUsageRecords(const std::vector<RUsageRecord>& records) {
+        for (size_t i = 0; i < records.size(); i++) {
+            PrintRUsage(records[i].start, records[i].end, "Decode " + std::to_string(i));
+        }
+    }
+
+    void AnalyzeDelegateExecution(tflite::Interpreter* interpreter) {
+        // Lambda function to print tensor details
+        auto print_tensor_details = [](int tensor_idx, TfLiteTensor* tensor) {
+            if (!tensor) {
+                std::cout << "Tensor " << tensor_idx << " is NULL\n";
+                return;
+            }
+            
+            // std::cout << "Tensor: " << tensor_idx << " ";
+            
+            void* tensor_data_address = tensor->data.raw;
+            std::cout << "Data Address: " << tensor_data_address << " ";
+
+            // Tensor Type
+            const char* type_name = TfLiteTypeGetName(tensor->type);
+            std::cout << "Type: " << (type_name ? type_name : "Unknown") << " ";
+
+            // Tensor Allocation Type
+            std::cout << "Allocation Type: ";
+            switch (tensor->allocation_type) {
+                case kTfLiteArenaRw:
+                    std::cout << "Arena RW " << "Bytes: " << tensor->bytes << " ";
+                    break;
+                case kTfLiteArenaRwPersistent:
+                    std::cout << "Arena Persistent " << "Bytes: " << tensor->bytes << " ";
+                    break;
+                case kTfLiteMmapRo:
+                    std::cout << "Mmap " << "Bytes: " << tensor->bytes << " ";
+                    break;
+                case kTfLiteDynamic:
+                    std::cout << "Dynamic " << "Bytes: " << tensor->bytes << " ";
+                    break;
+                case kTfLiteCustom:
+                    std::cout << "Custom " << "Bytes: " << tensor->bytes << " ";
+                    break;
+                case kTfLitePersistentRo:
+                    std::cout << "PersistentRo " << "Bytes: " << tensor->bytes << " ";
+                    break;
+                case kTfLiteVariantObject:
+                    std::cout << "Variant " << "Bytes: " << tensor->bytes << " ";
+                    break;
+                case kTfLiteMemNone:
+                    std::cout << "MemNone " << "Bytes: 0 ";
+                    break;
+                default:
+                    std::cout << "Unknown " << "Bytes: 0 ";
+                    break;
+            }
+
+            // Tensor Shape
+            std::cout << "Shape: [";
+            if(tensor->dims && tensor->dims->size > 0){
+                for (int dim_idx = 0; dim_idx < tensor->dims->size; ++dim_idx) {
+                    std::cout << tensor->dims->data[dim_idx];
+                    if (dim_idx < tensor->dims->size - 1) std::cout << ", ";
+                }
+            }
+            std::cout << "]\n";
+        };
+        
+        std::cout << "\n=== Delegate Execution Analysis ===\n";
+        std::cout << "===================================\n";
+    
+        // Analyze the primary subgraph's execution plan
+        const tflite::Subgraph& primary_subgraph = interpreter->primary_subgraph();
+        // std::cout <<  "Subgraph Name: " << primary_subgraph.name_ << std::endl;
+        const std::vector<int>& execution_plan = primary_subgraph.execution_plan();
+    
+        std::vector<int> delegated_nodes;
+        std::vector<int> non_delegated_nodes;
+    
+        for (int node_idx : execution_plan) {
+            const auto* node_and_reg = primary_subgraph.node_and_registration(node_idx);
+            const TfLiteNode* node = &node_and_reg->first;
+            
+            if (node->delegate) {
+                delegated_nodes.push_back(node_idx);
+            } else {
+                non_delegated_nodes.push_back(node_idx);
+            }
+        }
+    
+        //std::cout << "Delegate Analysis:\n";
+        std::cout << "  Total Nodes: " << execution_plan.size() << "\n";
+        std::cout << "  Delegated Nodes: " << delegated_nodes.size() << "\n";
+        std::cout << "  Non-Delegated Nodes: " << non_delegated_nodes.size() << "\n";
+        int num_input_tensors = 0;
+        int num_output_tensors = 0;
+        int num_intermediate_tensors = 0;
+        int num_temporary_tensors = 0;
+        int num_total_tensors = 0;
+
+        // Detailed node analysis based on execution order
+        std::cout << "=== Node Details ===" << std::endl;
+        for(int node_idx: execution_plan) {
+            const auto* node_and_reg = primary_subgraph.node_and_registration(node_idx);
+            const TfLiteNode* node = &node_and_reg->first;
+            const TfLiteRegistration& registration = node_and_reg->second;
+
+            std::cout << "  Node " << node_idx << ":\n";
+            std::cout << "    Operator: " 
+                      << (registration.builtin_code ? 
+                          tflite::EnumNameBuiltinOperator(static_cast<tflite::BuiltinOperator>(registration.builtin_code)) 
+                          : "Custom Operator") 
+                      << "\n";
+            // Print Input Tensor Indices
+            std::cout << "    Input Tensors:\n";
+            for (int i = 0; i < node->inputs->size; ++i) {
+                // 여기서 allocation type하고 address 찍을 수 있을 것 같은데 allocate 한 뒤에 찍어보면
+                
+                std::cout << "      Input " << i << ": " << node->inputs->data[i] << " ";
+                
+                uint32_t tensor_idx = node->inputs->data[i];
+                auto* tensor = interpreter->tensor(tensor_idx);
+                print_tensor_details(tensor_idx, tensor);
+                
+                ++num_input_tensors;
+            }
+            
+            // Print Output Tensor Indices
+            std::cout << "    Output Tensors:\n";
+            for (int i = 0; i < node->outputs->size; ++i) {
+                std::cout << "      Output " << i << ": " << node->outputs->data[i] << " ";
+
+                uint32_t tensor_idx = node->outputs->data[i];
+                auto* tensor = interpreter->tensor(tensor_idx);
+                print_tensor_details(tensor_idx, tensor);
+
+                ++num_output_tensors;
+            }
+            
+            // Print Intermediate Tensor Indices
+            std::cout << "    Intermediate Tensors:\n";
+            for (int i = 0; i < node->intermediates->size; ++i) {
+                std::cout << "      Intermediate " << i << ": " << node->intermediates->data[i] << " ";
+
+                uint32_t tensor_idx = node->intermediates->data[i];
+                auto* tensor = interpreter->tensor(tensor_idx);
+                print_tensor_details(tensor_idx, tensor);
+
+                ++num_intermediate_tensors;
+            }
+            
+            // Print Temporary Tensor Indices
+            std::cout << "    Temporary Tensors:\n";
+            for (int i = 0; i < node->temporaries->size; ++i) {
+                std::cout << "      Temporary " << i << ": " << node->temporaries->data[i] << " ";
+
+                uint32_t tensor_idx = node->temporaries->data[i];
+                auto* tensor = interpreter->tensor(tensor_idx);
+                print_tensor_details(tensor_idx, tensor);
+
+                ++num_temporary_tensors;
+            }
+        }
+    }
+    void PrintWorkingSetSize() {
+        FILE* file = fopen("/proc/self/statm", "r");
+        if (file) {
+            long total_pages = 0, resident_pages = 0;
+            // /proc/self/statm의 두 번째 필드는 resident 페이지 수입니다.
+            if (fscanf(file, "%ld %ld", &total_pages, &resident_pages) == 2) {
+                long page_size = sysconf(_SC_PAGESIZE);  // 페이지 크기 (바이트)
+                double working_set_size_mb = (resident_pages * page_size) / (1024.0 * 1024.0);
+                std::cout << "[INFO] Current Working Set Size: " 
+                          << working_set_size_mb << " MB" << std::endl;
+            }
+            fclose(file);
+        } else {
+            std::cerr << "[ERROR] Unable to open /proc/self/statm to read working set size." 
+                      << std::endl;
+        }
+    }
+
 } // end anonymous namespace
 
 // =======================================================================
@@ -610,48 +1117,95 @@ int main(int argc, char *argv[])
     std::string prompt, start_token, stop_token;
     int stop_token_id = -1;
 
+    // 0-1. Perf monitor initialziation
+    PerfMonitor perf_monitor;
+    PageFaultMetrics metrics;
+
+    // 0-2. Variable for CPU time only
+    rusage usage_start, usage_end;
+
+
+    PageFaultStats stats;
     // 1. Load Model
     {
         ScopeTimer timer("Model Loading");
+        getrusage(RUSAGE_SELF, &usage_start);
+        perf_monitor.start_phase("Model_Loading");
         model = LoadModel();
+        stats = perf_monitor.end_phase("Model_Loading");
+        getrusage(RUSAGE_SELF, &usage_end);
     }
+    PrintRUsage(usage_start, usage_end, "Model Loading");
+    metrics.RecordStats("Model_Loading", stats);
 
     // 2. Build Interpreter
     {
         ScopeTimer timer("Interpreter Building");
+        getrusage(RUSAGE_SELF, &usage_start);
+        perf_monitor.start_phase("Build_Interperter");
         interpreter = BuildInterpreter(model.get(), absl::GetFlag(FLAGS_num_threads));
+        stats = perf_monitor.end_phase("Build_Interperter");
+        getrusage(RUSAGE_SELF, &usage_end);
+        // reorderTensorSimple(interpreter);
     }
+    PrintRUsage(usage_start, usage_end, "Interpreter Building");
+    metrics.RecordStats("Build_Interpreter", stats);
+
+    // Tensor Reordering
+    {
+        ScopeTimer timer("Tensor Reordering");
+        getrusage(RUSAGE_SELF, &usage_start);
+        perf_monitor.start_phase("Reorder_Tensor");
+        // reorderTensorSimple(interpreter);
+        stats = perf_monitor.end_phase("Reorder_Tensor");
+        getrusage(RUSAGE_SELF, &usage_end);
+    }
+    PrintRUsage(usage_start, usage_end, "Tensor Reordering");
+    metrics.RecordStats("Reorder_Tensor", stats);
 
     // 3. Load SentencePiece
     {
         ScopeTimer timer("SentencePiece Loading");
+        getrusage(RUSAGE_SELF, &usage_start);
+        perf_monitor.start_phase("Load_SentencePiece");
         sp_processor = LoadSentencePieceProcessor();
+        stats = perf_monitor.end_phase("Load_SentencePiece");
+        getrusage(RUSAGE_SELF, &usage_end);
     }
+    PrintRUsage(usage_start, usage_end, "Sentence Piece Loading");
+    metrics.RecordStats("Load_SentencePiece", stats);
 
     // 4. Build KV Cache
     {
         ScopeTimer timer("KV Cache Building");
+        getrusage(RUSAGE_SELF, &usage_start);
+        perf_monitor.start_phase("Build_KVCache");
         kv_cache = BuildKVCache(interpreter.get());
         MINIMAL_CHECK(!kv_cache.empty());
+        stats = perf_monitor.end_phase("Build_KVCache");
+        getrusage(RUSAGE_SELF, &usage_end);
     }
+    PrintRUsage(usage_start, usage_end, "KV Cache Building");
+    metrics.RecordStats("Build_KVCache", stats);
 
     // 5. Optionally load LoRA
-    {
-        ScopeTimer timer("LoRA Loading");
-        if (!absl::GetFlag(FLAGS_lora_path).empty())
-        {
-            lora = ai_edge_torch::examples::LoRA::FromFile(absl::GetFlag(FLAGS_lora_path));
-            MINIMAL_CHECK(lora != nullptr);
-        }
-    }
+    // {
+    //     ScopeTimer timer("LoRA Loading");
+    //     if (!absl::GetFlag(FLAGS_lora_path).empty())
+    //     {
+    //         lora = ai_edge_torch::examples::LoRA::FromFile(absl::GetFlag(FLAGS_lora_path));
+    //         MINIMAL_CHECK(lora != nullptr);
+    //     }
+    // }
 
     // 6. Prepare Input Prompt
     {
         ScopeTimer timer("Input Prompt Preparation");
+        getrusage(RUSAGE_SELF, &usage_start);
+        perf_monitor.start_phase("Prepare_Prompt");
         prompt = absl::GetFlag(FLAGS_prompt);
         MINIMAL_CHECK(sp_processor->Encode(prompt, &prompt_tokens).ok());
 
-        
         start_token = absl::GetFlag(FLAGS_start_token);
         if (!start_token.empty())
         {
@@ -663,23 +1217,58 @@ int main(int argc, char *argv[])
         {
             stop_token_id = sp_processor->PieceToId(stop_token);
         }
+        stats = perf_monitor.end_phase("Prepare_Prompt");
+        getrusage(RUSAGE_SELF, &usage_end);
     }
+    PrintRUsage(usage_start, usage_end, "Input Prompt Preparation");
+    metrics.RecordStats("Prepare_Prompt", stats);
 
     // 7. Prepare Signature Runners
     tflite::SignatureRunner *prefill_runner = nullptr;
     tflite::SignatureRunner *decode_runner = nullptr;
     {
         ScopeTimer timer("Signature Runners Preparation");
+        getrusage(RUSAGE_SELF, &usage_start);
+        perf_monitor.start_phase("Prepare_Runners");
         std::size_t effective_prefill_token_size =
             (prompt_tokens.size() > 0) ? (prompt_tokens.size() - 1) : 0;
-
+            // std::cout << "HELLO";
         prefill_runner = GetPrefillRunner(
-            interpreter.get(), effective_prefill_token_size, kv_cache, lora.get());
+            interpreter.get(), effective_prefill_token_size, kv_cache, nullptr);
+        // std::cout << "HELLO2";
         MINIMAL_CHECK(prefill_runner != nullptr);
+        // std::cout << "HELLO1";
 
-        decode_runner = GetDecodeRunner(interpreter.get(), kv_cache, lora.get());
+        decode_runner = GetDecodeRunner(interpreter.get(), kv_cache, nullptr);
+        // std::cout << "HELLO4";
         MINIMAL_CHECK(decode_runner != nullptr);
+        // std::cout << "HELLO3";
+        
+        stats = perf_monitor.end_phase("Prepare_Runners");
+        getrusage(RUSAGE_SELF, &usage_end);
     }
+    PrintRUsage(usage_start, usage_end, "Signature Runner Preparation");
+    metrics.RecordStats("Prepare_Runners", stats);
+
+    {
+        ScopeTimer timer("Model Analysis");
+        AnalyzeDelegateExecution(interpreter.get());
+    }
+
+    // Pinning frequently used Tensors
+    {
+        ScopeTimer timer("Tensor Pinning");
+        getrusage(RUSAGE_SELF, &usage_start);
+        perf_monitor.start_phase("Pin_Tensors");
+
+        // PinFrequentTensors(interpreter.get());
+
+        stats = perf_monitor.end_phase("Pin_Tensors");
+        getrusage(RUSAGE_SELF, &usage_end);
+    }
+    PrintRUsage(usage_start, usage_end, "Tensor Pinning");
+    metrics.RecordStats("Pin_Tensors", stats);
+    
 
     // 8. Access Tensors
     TfLiteTensor *prefill_input = prefill_runner->input_tensor("tokens");
@@ -690,16 +1279,18 @@ int main(int argc, char *argv[])
 
     int max_seq_size = prefill_input->dims->data[1];
     int kv_cache_max_size = kv_cache_k_0->dims->data[1];
-
+    
     // 9. Prefill Stage
     {
         ScopeTimer timer("Prefill Stage");
+        getrusage(RUSAGE_SELF, &usage_start);
+        perf_monitor.start_phase("Prefill");
         int prefill_seq_size = std::min<int>(prompt_tokens.size(), max_seq_size);
-
+        std::cout << prefill_seq_size;
         // Zero out the input tensors
         std::memset(prefill_input->data.i32, 0, prefill_input->bytes);
         std::memset(prefill_input_pos->data.i32, 0, prefill_input_pos->bytes);
-
+        
         // Prefill uses all but the last token from the prompt
         for (int i = 0; i < prefill_seq_size - 1; ++i)
         {
@@ -707,9 +1298,14 @@ int main(int argc, char *argv[])
             prefill_input_pos->data.i32[i] = i;
         }
 
+        
         // Execute the prefill runner
         MINIMAL_CHECK(prefill_runner->Invoke() == kTfLiteOk);
+        stats = perf_monitor.end_phase("Prefill");
+        getrusage(RUSAGE_SELF, &usage_end);
     }
+    PrintRUsage(usage_start, usage_end, "Prefill Stage");
+    metrics.RecordStats("Prefill", stats);
 
     // 10. Decoding Stage with separate metrics for inference and sampling
     std::cout << "\nPrompt:\n"
@@ -718,7 +1314,10 @@ int main(int argc, char *argv[])
     // Metrics object
     DecodingMetrics decoding_metrics;
     decoding_metrics.StartDecoding();
-
+    PageFaultStats decode_stats;
+    std::vector<RUsageRecord> rusageRecords;
+    struct RUsageRecord decode_record;
+    //rusage decode_start, decode_end;
     {
         // ScopeTimer timer("Decoding Stage");
 
@@ -735,20 +1334,21 @@ int main(int argc, char *argv[])
         int next_position = prefill_seq_size - 1;
 
         // Decoding loop
+        // Decoding loop
         for (int i = 0; i < decode_steps; ++i)
         {
             // Start time for this token
             auto token_start = std::chrono::high_resolution_clock::now();
+            getrusage(RUSAGE_SELF, &decode_record.start);
+            perf_monitor.start_phase("Decode_Token_" + std::to_string(i));
 
             // -----------------------
             // 1) Model Inference
             // -----------------------
             auto inference_start = std::chrono::high_resolution_clock::now();
-
             decode_input->data.i32[0] = next_token;
             decode_input_pos->data.i32[0] = next_position;
             MINIMAL_CHECK(decode_runner->Invoke() == kTfLiteOk);
-
             auto inference_end = std::chrono::high_resolution_clock::now();
             double inference_time_ms =
                 std::chrono::duration<double, std::milli>(inference_end - inference_start).count();
@@ -777,13 +1377,26 @@ int main(int argc, char *argv[])
             MINIMAL_CHECK(sp_processor->Decode(single_token_vec, &single_decoded_text).ok());
             std::cout << single_decoded_text << std::flush;
 
+            // <-- 추가: 현재 Working Set Size 출력 -->
+            PrintWorkingSetSize();
+
+            // End perf recording
+            decode_stats = perf_monitor.end_phase("Decode_Token_" + std::to_string(i));
             // Record metrics for this token
             decoding_metrics.RecordTimes(token_start, inference_time_ms, sampling_time_ms);
+            getrusage(RUSAGE_SELF, &decode_record.end);
+            metrics.RecordStats("Decode", decode_stats);
+            rusageRecords.push_back(decode_record);
         }
+
     }
 
     // 11. Print decoding metrics (inference vs. sampling)
     decoding_metrics.PrintMetrics();
+    // 12. Print Perf results
+    metrics.PrintStats();
+    // 13. Print RUsage results
+    PrintRUsageRecords(rusageRecords);
 
     return 0;
 }
