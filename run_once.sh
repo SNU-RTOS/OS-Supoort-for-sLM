@@ -30,7 +30,7 @@ while read -r line; do
     if [[ "$line" =~ ^([0-9]+),\"(.*)\"$ ]]; then
             token_count="${BASH_REMATCH[1]}"
             prompt="${BASH_REMATCH[2]}"
-            echo $prompt
+            # echo $prompt
 
         sudo ./text_generator_main \
             --tflite_model="${MODEL_PATH}/${MODEL_NAME}.tflite" \
@@ -38,7 +38,7 @@ while read -r line; do
             --max_decode_steps=128 \
             --start_token="<bos>" \
             --stop_token="<eos>" \
-            --num_threads=1 \
+            --num_threads=2 \
             --prompt="$prompt" \
             --weight_cache_path="${MODEL_PATH}/${MODEL_NAME}.xnnpack_cache"
 

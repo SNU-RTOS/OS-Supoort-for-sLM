@@ -3,11 +3,13 @@
 *.bin
 __pycache__
 
+
 ########## User files ##########
 evaluation/*
 result_*
 perf.*
 *.txt
+.env
 
 # Excludes from User files
 !evaluation/show-plot.py
