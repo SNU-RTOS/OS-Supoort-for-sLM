@@ -18,7 +18,6 @@
 16,"Silent snow falls softly, blanketing world in white."
 16,"Ancient oak tree, branches reach sky, birds sing songs."
 16,"Golden leaves fall gently, autumn wind blows softly, winter comes."
-16,"Busy city streets bustle people rush quickly, day never stops."
 64,"The ancient oak tree stands tall and proud, its weathered branches reaching high towards the clear blue sky. Small birds perched on its limbs sing sweet, cheerful songs. The warm sun gently warms the cool, damp earth below. Ancient oak stands tall, weathered branches reach blue sky."
 64,"Nestled in a deep green valley, a quaint village sits beside a clear river. Wildflowers bloom in meadows, colors vibrant. An ancient stone bridge spans the river, witnessing centuries pass. River whispers to smooth, mossy stones. Dragonflies dance, wings shimmering in sun."
 64,"With the increasing threat of climate change and its potential long-term effects on our planet, what innovative technological solutions and global collaborative efforts can we implement effectively to mitigate the damage and ensure a sustainable future for generations to come?"

@@ -1,38 +1,19 @@
 #!/bin/bash
 # text_generator_main: Warning: SetProgramUsageMessage() never called
 
-#   Flags from ai_edge_torch/generative/examples/cpp/text_generator_main.cc:
-#     --lora_path (Optional path to LoRA artifact.); default: "";
-#     --max_decode_steps (The number of tokens to generate. Defaults to the KV
-#       cache size defined during conversion.); default: -1;
-#     --num_threads (Number of threads to use. Defaults to 4.); default: 4;
-#     --prompt (Input prompt to the model.); default: "Write an email:";
-#     --sentencepiece_model (Path to sentencepiece model.); default: "";
-#     --start_token (Start token is appended to the beginning of input prompt to
-#       signify start of sentence.); default: "";
-#     --stop_token (Stop token used to deterine end of decoding loop. If not
-#       provided will decode until max_kv_cache_size or max_decode_steps.);
-#       default: "";
-#     --tflite_model (Two-signature tflite model prepared for text generation
-#       using ODML tools.); default: "";
-#     --weight_cache_path (XNNPACK weight caching path, e.g.
-#       /tmp/model.xnnpack_cache.); default: "";
 
-# Try --helpfull to get a list of all flags or --help=substring shows help for
-# flags which include specified substring in either in the name, or description or
-# path.
-
-
+source .env
 # MODEL_PATH="/home/rtos/workspace/ghpark/export/gemma-2-2b-it-q8"
 # MODEL_NAME="gemma2_q8_ekv1024"
 
 # MODEL_PATH="/home/rtos/workspace/ghpark/export/gemma-2-2b-it-fp32"
 # MODEL_NAME="gemma2_f32_ekv1024"
 
-MODEL_PATH="/home/rtos/workspace/ghpark/export/llama-3.2-3b-it-q8"
+MODEL_PATH="${MODEL_PATH}/llama-3.2-3b-it-q8"
 MODEL_NAME="llama_q8_ekv1024"
 
-FILE="/home/rtos/workspace/ghpark/LLM-Inference-app/prompt/oneline_prompt.txt" # prompts_v8.txt 로 파일명 변경 (변수 사용 권장)
+
+FILE="./${PROMPT_PATH}/sample_prompt_8_1.txt"
 
 if [ ! -f "$FILE" ]; then
     echo "Error: 파일 '$FILE'이 존재하지 않습니다."
@@ -65,3 +46,25 @@ while read -r line; do
 done <"$FILE"
 
 
+######
+
+#   Flags from ai_edge_torch/generative/examples/cpp/text_generator_main.cc:
+#     --lora_path (Optional path to LoRA artifact.); default: "";
+#     --max_decode_steps (The number of tokens to generate. Defaults to the KV
+#       cache size defined during conversion.); default: -1;
+#     --num_threads (Number of threads to use. Defaults to 4.); default: 4;
+#     --prompt (Input prompt to the model.); default: "Write an email:";
+#     --sentencepiece_model (Path to sentencepiece model.); default: "";
+#     --start_token (Start token is appended to the beginning of input prompt to
+#       signify start of sentence.); default: "";
+#     --stop_token (Stop token used to deterine end of decoding loop. If not
+#       provided will decode until max_kv_cache_size or max_decode_steps.);
+#       default: "";
+#     --tflite_model (Two-signature tflite model prepared for text generation
+#       using ODML tools.); default: "";
+#     --weight_cache_path (XNNPACK weight caching path, e.g.
+#       /tmp/model.xnnpack_cache.); default: "";
+
+# Try --helpfull to get a list of all flags or --help=substring shows help for
+# flags which include specified substring in either in the name, or description or
+# path.
