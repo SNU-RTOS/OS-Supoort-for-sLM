@@ -46,3 +46,9 @@ Once setup.sh is done, you can build with `build.sh` in the future
 ./build.sh
 ./text_generator_main
 ```
+
+### 3.Run built binary
+
+```sh
+./run_once.sh
+```

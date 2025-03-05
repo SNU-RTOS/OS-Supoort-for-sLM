@@ -1,20 +1,22 @@
 #!/bin/bash
 
-MODEL_PATH="/home/rtos/workspace/ghpark/export/llama-3.2-3b-it-q8"
+source .env
+
+MODEL_PATH="${MODEL_PATH}/llama-3.2-3b-it-q8"
 MODEL_NAME="llama_q8_ekv1024"
 
 echo "[INFO] Start LLM inference"
 echo "[INFO] Model: ${MODEL_NAME}"
 
-FILE="sample_prompt.txt" # prompts_v8.txt 로 파일명 변경 (변수 사용 권장)
+FILE="./${PROMPT_PATH}/sample_prompt_8_3.txt"
 
 if [ ! -f "$FILE" ]; then
-    echo "Error: 파일 '$FILE'이 존재하지 않습니다."
+    echo "Error: File '$FILE' does not exist."
     exit 1
 fi
 
 NUM_REPEATS=2
-PROMPT_ITEM_SIZE=10
+PROMPT_ITEM_SIZE=3
 
 CGROUP_MMAX=(
     "512M"
@@ -27,6 +29,8 @@ CGROUP_MMAX=(
     "3.5G"
     "3.7G"
 )
+
+#######################
 
 for MMAX in "${CGROUP_MMAX[@]}"; do
     

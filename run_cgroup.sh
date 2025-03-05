@@ -1,89 +1,13 @@
 #!/bin/bash
 
-TRACEFS="/sys/kernel/debug/tracing"
-TRACE_SAVE_INTERVAL=5  # Save trace every 5 seconds
+################ Load utils ################
+source ./util/utils.sh
 
-setup_ftrace() {
-    # Clear existing trace
-    echo > $TRACEFS/trace
+################ Setup env ################
 
-    # Disable tracing temporarily
-    echo 0 > $TRACEFS/tracing_on
-
-    # Clear existing events
-    echo > $TRACEFS/set_event
-
-    # Enable memory-related events
-    echo 1 > $TRACEFS/events/kmem/mm_page_alloc/enable
-    echo 1 > $TRACEFS/events/kmem/mm_page_free/enable
-    echo 1 > $TRACEFS/events/kmem/rss_stat/enable
-    
-    # Memory reclaim events
-    echo 1 > $TRACEFS/events/vmscan/mm_vmscan_direct_reclaim_begin/enable
-    echo 1 > $TRACEFS/events/vmscan/mm_vmscan_direct_reclaim_end/enable
-    
-    # Set the trace buffer size (in KB)
-    echo 8192 > $TRACEFS/buffer_size_kb
-
-    # Use function tracer
-    echo function > $TRACEFS/current_tracer
-    
-    # Clear the trace buffer
-    echo > $TRACEFS/trace
-}
-
-setup_pid_filter() {
-    local pid=$1
-    
-    echo "common_pid==$pid" > $TRACEFS/events/kmem/mm_page_alloc/filter
-    echo "common_pid==$pid" > $TRACEFS/events/kmem/mm_page_free/filter
-    echo "common_pid==$pid" > $TRACEFS/events/kmem/rss_stat/filter
-    echo "common_pid==$pid" > $TRACEFS/events/vmscan/mm_vmscan_direct_reclaim_begin/filter
-    echo "common_pid==$pid" > $TRACEFS/events/vmscan/mm_vmscan_direct_reclaim_end/filter
-}
-
-save_trace_buffer() {
-    local output_file=$1
-    local elapsed_time=$2
-    
-    # Save current trace buffer by appending to the output file
-    echo -e "\n# Elapsed time: $elapsed_time seconds" >> "$output_file"
-    cat $TRACEFS/trace >> "$output_file"
-    
-    # Clear the buffer for next collection
-    echo > $TRACEFS/trace
-    
-    echo "[INFO] Appended trace data at $elapsed_time seconds"
-}
-
-get_pagefault_stats() {
-    local pid=$1
-    local stat_line=$(cat /proc/$pid/stat 2>/dev/null)
-    if [ $? -eq 0 ]; then
-        local stats=($stat_line)
-        echo "${stats[9]},${stats[11]}"
-    else
-        echo "0,0"
-    fi
-}
-
-clear_caches() {
-    echo "[INFO] Dropping OS Page Caches.."
-    sync && echo 3 | tee /proc/sys/vm/drop_caches > /dev/null
-    echo "[INFO] Clearing CPU Caches"
-
-    if [[ -f "./clear_cache_arm" ]]; then
-        ./clear_cache_arm
-    else
-        echo "[WARNING] CPU cache clearing script not found: ./clear_cache_arm"
-    fi
-
-    echo "[INFO] DONE: Clearing Caches"
-    echo ""
-}
 
 # Llama 3.2 3B INT8 quantized
-MODEL_PATH="/home/rtos/workspace/ghpark/export//llama-3.2-3b-it-q8"
+MODEL_PATH="${MODEL_PATH}/llama-3.2-3b-it-q8"
 MODEL_NAME="llama_q8_ekv1024"
 
 # Gemma 2B FP32
@@ -123,6 +47,7 @@ CGROUP_MMAX=(
 # echo 1 > /sys/fs/cgroup/memory/mygroup/memory.use_hierarchy
 # echo 0 > /sys/fs/cgroup/memory/mygroup/memory.oom_control
 
+################ Main scripts ################
 
 for MMAX in "${CGROUP_MMAX[@]}"; do
     RESULTS_DIR="result_dp_${MMAX}"

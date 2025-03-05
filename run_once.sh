@@ -1,8 +1,9 @@
 #!/bin/bash
-# text_generator_main: Warning: SetProgramUsageMessage() never called
 
 
+################ Setup environment ################
 source .env
+source ./util/utils.sh
 # MODEL_PATH="/home/rtos/workspace/ghpark/export/gemma-2-2b-it-q8"
 # MODEL_NAME="gemma2_q8_ekv1024"
 
@@ -21,16 +22,14 @@ if [ ! -f "$FILE" ]; then
 fi
 
 echo "[INFO] Dropping OS Page Caches.."
-# cat /proc/meminfo | grep -E 'Cached|Buffers'
-sudo sync && echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null
-# cat /proc/meminfo | grep -E 'Cached|Buffers'
+clear_caches
 echo "[INFO] Clearing CPU Caches"
 
+################ scripts ################
 while read -r line; do
     if [[ "$line" =~ ^([0-9]+),\"(.*)\"$ ]]; then
             token_count="${BASH_REMATCH[1]}"
             prompt="${BASH_REMATCH[2]}"
-            # echo $prompt
 
         sudo ./text_generator_main \
             --tflite_model="${MODEL_PATH}/${MODEL_NAME}.tflite" \
@@ -45,9 +44,8 @@ while read -r line; do
     fi
 done <"$FILE"
 
-
 ######
-
+# text_generator_main: Warning: SetProgramUsageMessage() never called
 #   Flags from ai_edge_torch/generative/examples/cpp/text_generator_main.cc:
 #     --lora_path (Optional path to LoRA artifact.); default: "";
 #     --max_decode_steps (The number of tokens to generate. Defaults to the KV
