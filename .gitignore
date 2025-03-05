@@ -5,11 +5,14 @@ __pycache__
 
 ########## User files ##########
 evaluation/*
-!evaluation/plot.sh
-!evaluation/show-plot.py
 result_*
 perf.*
 .env
+*.txt
+
+# Excludes from User files
+!evaluation/show-plot.py
+!evaluation/plot.sh
 
 ########## Folders ##########
 backup

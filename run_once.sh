@@ -23,14 +23,14 @@
 # path.
 
 
-MODEL_PATH="/home/rtos/workspace/ghpark/export/gemma-2-2b-it-q8"
-MODEL_NAME="gemma2_q8_ekv1024"
+# MODEL_PATH="/home/rtos/workspace/ghpark/export/gemma-2-2b-it-q8"
+# MODEL_NAME="gemma2_q8_ekv1024"
 
 # MODEL_PATH="/home/rtos/workspace/ghpark/export/gemma-2-2b-it-fp32"
 # MODEL_NAME="gemma2_f32_ekv1024"
 
-# MODEL_PATH="/home/rtos/workspace/ghpark/export/llama-3.2-3b-it-q8"
-# MODEL_NAME="llama_q8_ekv1024"
+MODEL_PATH="/home/rtos/workspace/ghpark/export/llama-3.2-3b-it-q8"
+MODEL_NAME="llama_q8_ekv1024"
 
 FILE="/home/rtos/workspace/ghpark/LLM-Inference-app/prompt/oneline_prompt.txt" # prompts_v8.txt 로 파일명 변경 (변수 사용 권장)
 

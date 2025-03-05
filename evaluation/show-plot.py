@@ -31,6 +31,17 @@ class LogMetrics:
             'user_time': 0.0,
             'system_time': 0.0
         }
+        # Added for detailed TTFT breakdown
+        self.prefill_time_breakdown: Dict[str, float] = {
+            'cpu_time': 0.0,
+            'user_time': 0.0,
+            'system_time': 0.0
+        }
+        self.first_decode_breakdown: Dict[str, float] = {
+            'cpu_time': 0.0,
+            'user_time': 0.0,
+            'system_time': 0.0
+        }
         
     def calculate_total_major_faults(self) -> int:
         return sum(phase.major_faults for phase in self.phases.values())
@@ -49,49 +60,83 @@ def safe_float_conversion(value: str, default: float = 0.0) -> float:
 def parse_phase_info(content: str) -> Dict[str, PhaseMetrics]:
     phases = {}
     
-    # First, parse decode step-level faults
-    decode_step_pattern = r"Decode step (\d+)\s*\n\s*- Major page faults: (\d+)\s*\n\s*- Minor page faults: (\d+)"
-    decode_step_matches = list(re.finditer(decode_step_pattern, content))
+    # First try to parse using the new detailed performance statistics format
+    new_format_pattern = r"=== Performance Statistics for Phase: ([^\n=]+) ===\s*\n(?:Number of measurements: \d+\s*\n)?(?:Average )?Wall clock time: (\d+) ms\s*\n(?:Average )?User time: ([\d.e-]+) sec\s*\n(?:Average )?System time: ([\d.e-]+) sec"
+    new_format_matches = list(re.finditer(new_format_pattern, content))
     
-    # Calculate averages from step-level data
-    if decode_step_matches:
-        major_faults = [int(match.group(2)) for match in decode_step_matches]
-        minor_faults = [int(match.group(3)) for match in decode_step_matches]
+    # Flag to track if we found the Decode_Token phase
+    found_decode_token = False
+    
+    # If we found the new format
+    if new_format_matches:
+        logger.info(f"Found new format performance statistics for {len(new_format_matches)} phases")
         
-        # Create Decode phase metrics from step-level data
-        decode_metrics = PhaseMetrics()
-        decode_metrics.major_faults = np.mean(major_faults)
-        decode_metrics.minor_faults = np.mean(minor_faults)
-        phases['Decode'] = decode_metrics
+        for match in new_format_matches:
+            try:
+                phase_name = match.group(1).strip()
+                metrics = PhaseMetrics()
+                metrics.duration = int(match.group(2))
+                
+                # For page faults, we don't have direct numbers in the new format
+                # We'll try to estimate or use zero as placeholder
+                metrics.minor_faults = 0
+                metrics.major_faults = 0
+                
+                # Special case: rename "Decode_Token" to "Decode" for consistency
+                if phase_name == "Decode_Token":
+                    phase_name = "Decode"
+                    found_decode_token = True
+                    logger.info("Renamed Decode_Token phase to Decode for consistency")
+                
+                # Add or update phase metrics
+                phases[phase_name] = metrics
+                logger.debug(f"Parsed phase {phase_name} with new format: duration={metrics.duration}")
+            except (ValueError, IndexError) as e:
+                logger.warning(f"Error parsing phase info with new format for {match.group(1)}: {e}")
+    
+    # If we haven't found Decode or Decode_Token in the new format, try the original methods
+    if 'Decode' not in phases and not found_decode_token:
+        # Try to parse decode step-level faults (original format)
+        decode_step_pattern = r"Decode step (\d+)\s*\n\s*- Major page faults: (\d+)\s*\n\s*- Minor page faults: (\d+)"
+        decode_step_matches = list(re.finditer(decode_step_pattern, content))
         
-        logger.info(f"Parsed Decode step faults: Avg Major={decode_metrics.major_faults:.2f}, Avg Minor={decode_metrics.minor_faults:.2f}")
-    else:
-        # Fallback to previous parsing method if step-level data not found
-        logger.warning("No step-level decode faults found, falling back to summary parsing")
-        decode_phase_pattern = r"Phase: Decode\s*\nNumber of measurements: (\d+)\s*\nAverage duration: ([\d.]+) ms\s*\nTotal minor page faults: (\d+)\s*\nTotal major page faults: (\d+)"
-        decode_match = re.search(decode_phase_pattern, content)
-        
-        if decode_match:
+        if decode_step_matches:
+            major_faults = [int(match.group(2)) for match in decode_step_matches]
+            minor_faults = [int(match.group(3)) for match in decode_step_matches]
+            
             decode_metrics = PhaseMetrics()
-            decode_metrics.duration = float(decode_match.group(2))
-            decode_metrics.minor_faults = int(decode_match.group(3))
-            decode_metrics.major_faults = int(decode_match.group(4))
+            decode_metrics.major_faults = np.mean(major_faults)
+            decode_metrics.minor_faults = np.mean(minor_faults)
             phases['Decode'] = decode_metrics
+            
+            logger.info(f"Parsed Decode step faults: Avg Major={decode_metrics.major_faults:.2f}, Avg Minor={decode_metrics.minor_faults:.2f}")
+        else:
+            # Fallback to previous parsing method if step-level data not found
+            logger.warning("No step-level decode faults found, falling back to summary parsing")
+            decode_phase_pattern = r"Phase: Decode\s*\nNumber of measurements: (\d+)\s*\nAverage duration: ([\d.]+) ms\s*\nTotal minor page faults: (\d+)\s*\nTotal major page faults: (\d+)"
+            decode_match = re.search(decode_phase_pattern, content)
+            
+            if decode_match:
+                decode_metrics = PhaseMetrics()
+                decode_metrics.duration = float(decode_match.group(2))
+                decode_metrics.minor_faults = int(decode_match.group(3))
+                decode_metrics.major_faults = int(decode_match.group(4))
+                phases['Decode'] = decode_metrics
     
-    # Parse other phases with the updated format
+    # Parse other phases with the old format if they haven't been found yet
     phase_pattern = r"Phase: ([^\n]+)\s*\nDuration: (\d+) ms\s*\nMinor page faults: (\d+)\s*\nMajor page faults: (\d+)"
     matches = re.finditer(phase_pattern, content)
     
     for match in matches:
         try:
             phase_name = match.group(1).strip()
-            if phase_name != 'Decode':  # Skip Decode as it's already handled
+            if phase_name not in phases:  # Only add if not already parsed with new format
                 metrics = PhaseMetrics()
                 metrics.duration = int(match.group(2))
                 metrics.minor_faults = int(match.group(3))
                 metrics.major_faults = int(match.group(4))
                 phases[phase_name] = metrics
-                logger.debug(f"Parsed phase {phase_name}: duration={metrics.duration}, minor={metrics.minor_faults}, major={metrics.major_faults}")
+                logger.debug(f"Parsed phase {phase_name} with old format: duration={metrics.duration}, minor={metrics.minor_faults}, major={metrics.major_faults}")
         except (ValueError, IndexError) as e:
             logger.warning(f"Error parsing phase info for {phase_name}: {e}")
             continue
@@ -99,30 +144,50 @@ def parse_phase_info(content: str) -> Dict[str, PhaseMetrics]:
     return phases
 
 def parse_decode_times(content: str) -> List[float]:
-    """Parse decode times from the correct format, extracting CPU time"""
-    decode_pattern = r"Decode \d+ took\s*\n-\s*([\d.]+)\s*\[sec\] CPU time"
+    """Parse decode times from both old and new formats, extracting CPU time"""
     times = []
-    matches = list(re.finditer(decode_pattern, content))
     
-    if not matches:
-        logger.warning("No decode time entries found")
-        return times
+    # Try new format first (Per-step details)
+    new_decode_pattern = r"Step (\d+):\s*\n  Wall clock time: \d+ ms\s*\n  User time: [\d.e-]+ sec\s*\n  System time: [\d.e-]+ sec\s*\n  Total CPU time \(user\+system\): ([\d.e-]+) sec"
+    new_matches = list(re.finditer(new_decode_pattern, content))
     
-    i = 0
-    for match in matches:
-        try:
-            cpu_time = float(match.group(1))
-            if(i == 0):
-                i += 1
-                continue
-            times.append(cpu_time)
-            logger.debug(f"Parsed decode time: {cpu_time} seconds")
-        except (ValueError, IndexError) as e:
-            logger.warning(f"Error parsing decode time: {e}")
-            continue
+    if new_matches:
+        logger.info(f"Found new format decode time details for {len(new_matches)} steps")
+        for match in new_matches:
+            try:
+                step = int(match.group(1))
+                cpu_time = float(match.group(2))
+                # Skip step 0 for consistency with old format
+                if step > 0:
+                    times.append(cpu_time)
+                    logger.debug(f"Parsed decode time for step {step}: {cpu_time} seconds")
+            except (ValueError, IndexError) as e:
+                logger.warning(f"Error parsing decode time from new format: {e}")
+    
+    # If no times found with new format, try the old format
+    if not times:
+        old_decode_pattern = r"Decode \d+ took\s*\n-\s*([\d.]+)\s*\[sec\] CPU time"
+        old_matches = list(re.finditer(old_decode_pattern, content))
+        
+        if old_matches:
+            i = 0
+            for match in old_matches:
+                try:
+                    cpu_time = float(match.group(1))
+                    # Skip the first decode (index 0) as per original implementation
+                    if i == 0:
+                        i += 1
+                        continue
+                    times.append(cpu_time)
+                    logger.debug(f"Parsed decode time with old format: {cpu_time} seconds")
+                except (ValueError, IndexError) as e:
+                    logger.warning(f"Error parsing decode time from old format: {e}")
+                    continue
     
     if times:
         logger.info(f"Successfully parsed {len(times)} decode times")
+    else:
+        logger.warning("No decode time entries found in either format")
     
     return times
 
@@ -131,7 +196,7 @@ def parse_decoding_time_breakdown(content: str) -> Dict[str, float]:
     Parse decoding time breakdown from log content.
     
     Returns a dictionary with the following keys:
-    - 'avg_latency': Average Decoding Latency
+    - 'avg_latency': Average Decoding Latency (in seconds)
     - 'user_time': User time
     - 'system_time': System time
     """
@@ -141,11 +206,13 @@ def parse_decoding_time_breakdown(content: str) -> Dict[str, float]:
         'system_time': 0.0
     }
     
-    # Parse average decoding latency
-    avg_latency_pattern = r"\[METRICS\]\s*Average Decoding Latency\s*:\s*([\d.]+)\s*\[sec\]"
+    # Parse average decoding latency - fixed pattern to match the actual format in logs
+    avg_latency_pattern = r"\[METRICS\]\s*Average Decoding Latency\s*:\s*([\d.,]+)\s*ms/tokens"
     avg_latency_match = re.search(avg_latency_pattern, content)
     if avg_latency_match:
-        breakdown['avg_latency'] = safe_float_conversion(avg_latency_match.group(1))
+        # Convert from milliseconds to seconds for consistency with other time measurements
+        ms_value = safe_float_conversion(avg_latency_match.group(1))
+        breakdown['avg_latency'] = ms_value / 1000.0  # Convert ms to seconds
     
     # Parse time breakdown
     time_pattern = r"- ([\d.]+)\s*\[sec\] (User|System) time"
@@ -180,6 +247,123 @@ def parse_prefill_and_ttft(content: str) -> Tuple[float, float]:
     
     return prefill_time, ttft
 
+def parse_prefill_breakdown(content: str) -> Dict[str, float]:
+    """
+    Parse prefill time breakdown from both old and new log content formats.
+    
+    Returns a dictionary with the following keys:
+    - 'cpu_time': CPU time for prefill
+    - 'user_time': User time for prefill
+    - 'system_time': System time for prefill
+    """
+    breakdown = {
+        'cpu_time': 0.0,
+        'user_time': 0.0,
+        'system_time': 0.0
+    }
+    
+    # Try new format first
+    new_format_pattern = r"=== Performance Statistics for Phase: Prefill ===\s*\nWall clock time: \d+ ms\s*\nUser time: ([\d.e-]+) sec\s*\nSystem time: ([\d.e-]+) sec\s*\nTotal CPU time \(user\+system\): ([\d.e-]+) sec"
+    new_match = re.search(new_format_pattern, content)
+    
+    if new_match:
+        # Extract values from the new format
+        breakdown['user_time'] = safe_float_conversion(new_match.group(1))
+        breakdown['system_time'] = safe_float_conversion(new_match.group(2))
+        breakdown['cpu_time'] = safe_float_conversion(new_match.group(3))
+        logger.info(f"Parsed prefill breakdown from new format: user={breakdown['user_time']}, system={breakdown['system_time']}, cpu={breakdown['cpu_time']}")
+        return breakdown
+    
+    # If new format not found, try old format
+    # Find the line with "Prefill Stage took" to locate the section
+    prefill_marker = "Prefill Stage took"
+    prefill_pos = content.find(prefill_marker)
+    
+    if prefill_pos != -1:
+        # Look for time measurements following that section
+        # Find all time measurements following the pattern "- X [sec] Type time"
+        time_pattern = r"-\s*([\d.]+)\s*\[sec\] (CPU|User|System) time"
+        
+        # Extract a reasonable chunk of text after the marker
+        section_end = content.find("\n\n", prefill_pos)
+        if section_end == -1:  # If no double newline, take a reasonable amount
+            section_end = prefill_pos + 500
+        
+        prefill_section = content[prefill_pos:section_end]
+        
+        # Find all time measurements in this section
+        for match in re.finditer(time_pattern, prefill_section):
+            time_value = safe_float_conversion(match.group(1))
+            time_type = match.group(2).lower()
+            
+            if time_type == 'cpu':
+                breakdown['cpu_time'] = time_value
+            elif time_type == 'user':
+                breakdown['user_time'] = time_value
+            elif time_type == 'system':
+                breakdown['system_time'] = time_value
+        
+        logger.info(f"Parsed prefill breakdown from old format: user={breakdown['user_time']}, system={breakdown['system_time']}, cpu={breakdown['cpu_time']}")
+    
+    return breakdown
+
+def parse_first_decode_breakdown(content: str) -> Dict[str, float]:
+    """
+    Parse the first decode step time breakdown from both old and new log content formats.
+    
+    Returns a dictionary with the following keys:
+    - 'cpu_time': CPU time for first decode
+    - 'user_time': User time for first decode
+    - 'system_time': System time for first decode
+    """
+    breakdown = {
+        'cpu_time': 0.0,
+        'user_time': 0.0,
+        'system_time': 0.0
+    }
+    
+    # Try new format first
+    new_format_pattern = r"Step 0:\s*\n  Wall clock time: \d+ ms\s*\n  User time: ([\d.e-]+) sec\s*\n  System time: ([\d.e-]+) sec\s*\n  Total CPU time \(user\+system\): ([\d.e-]+) sec"
+    new_match = re.search(new_format_pattern, content)
+    
+    if new_match:
+        # Extract values from the new format
+        breakdown['user_time'] = safe_float_conversion(new_match.group(1))
+        breakdown['system_time'] = safe_float_conversion(new_match.group(2))
+        breakdown['cpu_time'] = safe_float_conversion(new_match.group(3))
+        logger.info(f"Parsed first decode breakdown from new format: user={breakdown['user_time']}, system={breakdown['system_time']}, cpu={breakdown['cpu_time']}")
+        return breakdown
+    
+    # If new format not found, try old format
+    # Find the line with "Decode 0 took" to locate the first decode section
+    decode_marker = "Decode 0 took"
+    decode_pos = content.find(decode_marker)
+    
+    if decode_pos != -1:
+        # Extract a reasonable chunk of text after the marker
+        section_end = content.find("Decode 1", decode_pos)
+        if section_end == -1:  # If no "Decode 1" marker, take a reasonable amount
+            section_end = decode_pos + 200
+        
+        decode_section = content[decode_pos:section_end]
+        
+        # Find all time measurements in this section using the pattern "- X [sec] Type time"
+        time_pattern = r"-\s*([\d.]+)\s*\[sec\] (CPU|User|System) time"
+        for match in re.finditer(time_pattern, decode_section):
+            time_value = safe_float_conversion(match.group(1))
+            time_type = match.group(2).lower()
+            
+            if time_type == 'cpu':
+                breakdown['cpu_time'] = time_value
+            elif time_type == 'user':
+                breakdown['user_time'] = time_value
+            elif time_type == 'system':
+                breakdown['system_time'] = time_value
+        
+        logger.info(f"Parsed first decode breakdown from old format: user={breakdown['user_time']}, system={breakdown['system_time']}, cpu={breakdown['cpu_time']}")
+    
+    return breakdown
+
 def parse_log_file(file_path: str) -> Optional[LogMetrics]:
     metrics = LogMetrics()
     
@@ -195,10 +379,24 @@ def parse_log_file(file_path: str) -> Optional[LogMetrics]:
         # Parse decoding time breakdown
         metrics.decoding_time_breakdown = parse_decoding_time_breakdown(content)
         
-        # Validation
+        # Parse prefill and first decode breakdowns
+        metrics.prefill_time_breakdown = parse_prefill_breakdown(content)
+        metrics.first_decode_breakdown = parse_first_decode_breakdown(content)
+        
+        # Modified validation logic
+        # For new format, we don't strictly require 'Decode' in phases
+        # as long as we have valid decode times and TTFT
         if 'Decode' not in metrics.phases:
             logger.warning(f"No Decode phase information found in {file_path}")
-            metrics.is_valid = False
+            # Check if we have decode times and TTFT, which would indicate we're using the new format
+            if metrics.decode_times and metrics.time_to_first_token > 0:
+                logger.info(f"Using new format validation for {file_path} - decode times and TTFT are valid")
+                # Create a dummy Decode phase entry if needed
+                decode_metrics = PhaseMetrics()
+                decode_metrics.duration = metrics.time_to_first_token - metrics.prefill_time
+                metrics.phases['Decode'] = decode_metrics
+            else:
+                metrics.is_valid = False
         
         return metrics
     except Exception as e:
@@ -242,159 +440,6 @@ def process_directory(base_dir: str, ram_dirs: Dict[str, str], input_tokens: Lis
         logger.error("No valid data found in any of the directories")
     
     return results
-
-def create_decode_major_faults_plot(results: Dict, ram_sizes: List[str], input_tokens: List[int]):
-    # Create a separate plot for each input token length
-    figs = []
-    has_data = False
-
-    # For each input token length
-    for token in input_tokens:
-        fig = go.Figure()
-        token_has_data = False
-        
-        # Collect data for this token length
-        y_values = []
-        for ram_size in ram_sizes:
-            if token in results[ram_size] and results[ram_size][token]:
-                metrics_list = [m for m in results[ram_size][token] if m.is_valid and 'Decode' in m.phases]
-                if metrics_list:
-                    # Use the average of the Decode phase major faults across all runs
-                    avg_faults = np.mean([m.phases['Decode'].major_faults for m in metrics_list[1:]])
-                    y_values.append(avg_faults)
-                    token_has_data = True
-                    has_data = True
-                else:
-                    y_values.append(None)
-            else:
-                y_values.append(None)
-        
-        if token_has_data:
-            fig.add_trace(go.Bar(
-                x=ram_sizes,
-                y=y_values,
-                text=[f"{v:.1f}" if v is not None else "N/A" for v in y_values],
-                textposition='outside',
-                marker_color='#E15759'
-            ))
-
-            # Update layout for this specific plot
-            fig.update_layout(
-                title=f"Major Page Faults During Decode Phase (Input Tokens: {token})",
-                xaxis_title="RAM Size",
-                yaxis_title="Average Major Page Faults",
-                template='plotly_white',
-                showlegend=False,
-                height=600,
-                width=1000,
-                # Add grid lines for better readability
-                xaxis=dict(
-                    showgrid=True,
-                    gridwidth=1,
-                    gridcolor='LightGray',
-                    zeroline=True,
-                    zerolinecolor='LightGray'
-                ),
-                yaxis=dict(
-                    showgrid=True,
-                    gridwidth=1,
-                    gridcolor='LightGray',
-                    zeroline=True,
-                    zerolinewidth=2,
-                    zerolinecolor='Gray'
-                )
-            )
-            figs.append((token, fig))
-
-    if not has_data:
-        logger.warning("No valid data for decode major faults plot")
-        return None
-
-    return figs
-
-
-def create_total_major_faults_plot(results: Dict, ram_sizes: List[str], input_tokens: List[int]):
-    # Collect all unique phases
-    all_phases = set()
-    for ram_size in ram_sizes:
-        for token in input_tokens:
-            if token in results[ram_size]:
-                for metrics in results[ram_size][token]:
-                    if metrics.is_valid:
-                        all_phases.update(metrics.phases.keys())
-    
-    if not all_phases:
-        logger.warning("No valid phases found for total major faults plot")
-        return None
-
-    # Color scheme for phases
-    phase_colors = {
-        'Decode': '#1f77b4',
-        'Prefill': '#ff7f0e',
-        'Prepare_Runners': '#2ca02c',
-        'Build_KVCache': '#d62728',
-        'Load_SentencePiece': '#9467bd',
-        'Prepare_Prompt': '#8c564b',
-        'Build_Interpreter': '#e377c2',
-        'Model_Loading': '#7f7f7f'
-    }
-
-    # Create a separate plot for each input token length
-    figs = []
-    has_data = False
-
-    # For each input token length
-    for token in input_tokens:
-        fig = go.Figure()
-        token_has_data = False
-
-        # For each phase
-        for phase in sorted(all_phases):
-            y_values = []
-            # For each RAM size
-            for ram_size in ram_sizes:
-                if token in results[ram_size] and results[ram_size][token]:
-                    metrics_list = [m for m in results[ram_size][token] if m.is_valid and phase in m.phases]
-                    if metrics_list:
-                        avg_faults = np.mean([m.phases[phase].major_faults for m in metrics_list])
-                        y_values.append(avg_faults)
-                        token_has_data = True
-                        has_data = True
-                    else:
-                        y_values.append(0)
-                else:
-                    y_values.append(0)
-            
-            if any(v != 0 for v in y_values):
-                fig.add_trace(
-                    go.Bar(
-                        name=phase,
-                        x=ram_sizes,
-                        y=y_values,
-                        marker_color=phase_colors.get(phase, '#000000')
-                    )
-                )
-
-        if token_has_data:
-            # Update layout for this specific plot
-            fig.update_layout(
-                title=f"Total Major Page Faults by Phase (Input Tokens: {token})",
-                xaxis_title="RAM Size",
-                yaxis_title="Average Major Page Faults",
-                barmode='stack',
-                template='plotly_white',
-                showlegend=True,
-                legend_title="Phases",
-                height=600,
-                width=1000
-            )
-            figs.append((token, fig))
-
-    if not has_data:
-        logger.warning("No valid data for total major faults plot")
-        return None
-
-    return figs
 
 
 def create_ttft_plot(results: Dict, ram_sizes: List[str], input_tokens: List[int]):
@@ -445,7 +490,7 @@ def create_ttft_plot(results: Dict, ram_sizes: List[str], input_tokens: List[int
             
             # Add first decode bars
             fig.add_trace(go.Bar(
-                name='First Decode',
+                name='Decode',
                 x=ram_sizes,
                 y=first_decode_values,
                 marker_color='#1f77b4',
@@ -489,6 +534,168 @@ def create_ttft_plot(results: Dict, ram_sizes: List[str], input_tokens: List[int
 
     return figs
 
+def create_ttft_detailed_breakdown_plot(results: Dict, ram_sizes: List[str], input_tokens: List[int]):
+    # Create a separate plot for each input token length
+    figs = []
+    has_data = False
+
+    # Define colors for each component
+    colors = {
+        'prefill_user': '#EDC948',    # Light Salmon
+        'prefill_system': '#BAB0AC',  # Coral
+        'prefill_other': '#d62728',   # Deep Orange
+        'decode_user': '#EDC948',     # Light Blue
+        'decode_system': '#BAB0AC',   # Light Blue
+        'decode_other': '#d62728'     # Blue
+    }
+    
+    prefill_patterns = {
+        'prefill_user': '/',
+        'prefill_system': '/',
+        'prefill_other': '/'
+    }
+
+    # For each input token length
+    for token in input_tokens:
+        fig = go.Figure()
+        token_has_data = False
+        
+        # Initialize data containers
+        data = {
+            'prefill_user': [],
+            'prefill_system': [],
+            'prefill_other': [],
+            'decode_user': [],
+            'decode_system': [],
+            'decode_other': []
+        }
+        
+        for ram_size in ram_sizes:
+            if token in results[ram_size] and results[ram_size][token]:
+                metrics_list = [m for m in results[ram_size][token] if m.is_valid]
+                if metrics_list:
+                    # Calculate average prefill time (convert from ms to sec)
+                    avg_prefill = np.mean([m.prefill_time for m in metrics_list]) / 1000
+                    
+                    # Get first decode time from decode_times list
+                    avg_decode = np.mean([m.time_to_first_token if m.time_to_first_token else 0 for m in metrics_list]) / 1000
+                    
+                    # Calculate prefill components
+                    avg_prefill_user = np.mean([m.prefill_time_breakdown['user_time'] for m in metrics_list])
+                    avg_prefill_system = np.mean([m.prefill_time_breakdown['system_time'] for m in metrics_list])
+                    avg_prefill_cpu = np.mean([m.prefill_time_breakdown['cpu_time'] for m in metrics_list])
+                    
+                    # Calculate "other" time for prefill (CPU time that's not user or system time)
+                    avg_prefill_other = max(0, avg_prefill - avg_prefill_user - avg_prefill_system)
+                    
+                    # Calculate first decode components
+                    avg_decode_user = np.mean([m.first_decode_breakdown['user_time'] for m in metrics_list])
+                    avg_decode_system = np.mean([m.first_decode_breakdown['system_time'] for m in metrics_list])
+                    avg_decode_cpu = np.mean([m.first_decode_breakdown['cpu_time'] for m in metrics_list])
+                    
+                    # Calculate "other" time for first decode
+                    avg_decode_other = max(0, avg_decode - avg_decode_user - avg_decode_system)
+                    
+                    # Store values
+                    data['prefill_user'].append(avg_prefill_user)
+                    data['prefill_system'].append(avg_prefill_system)
+                    data['prefill_other'].append(avg_prefill_other)
+                    data['decode_user'].append(avg_decode_user)
+                    data['decode_system'].append(avg_decode_system)
+                    data['decode_other'].append(avg_decode_other)
+                    
+                    token_has_data = True
+                    has_data = True
+                else:
+                    for key in data:
+                        data[key].append(None)
+            else:
+                for key in data:
+                    data[key].append(None)
+        
+        if token_has_data:
+            # Add traces for each component in stacked order
+            component_order = [
+                ('prefill_user', 'Prefill - User Inference Code Time'),
+                ('prefill_system', 'Prefill - I/O Time'),
+                ('prefill_other', 'Prefill - Preempt Time'),
+                ('decode_user', 'Decode - User Inferece Code Time'),
+                ('decode_system', 'Decode - I/O Time'),
+                ('decode_other', 'Decode - Preempt Time')
+            ]
+            
+            for key, name in component_order:
+                if key.startswith('prefill'):
+                    fig.add_trace(go.Bar(
+                        name=name,
+                        x=ram_sizes,
+                        y=data[key],
+                        marker=dict(
+                            color=colors[key],
+                            pattern=dict(
+                                shape=prefill_patterns[key],
+                                solidity=0.3  # Adjust pattern density
+                            )
+                        ),
+                        text=[f"{v:.2f}" if v is not None and v > 0.01 else "" for v in data[key]],
+                        textposition='inside'
+                    ))
+                else:
+                    fig.add_trace(go.Bar(
+                    name=name,
+                    x=ram_sizes,
+                    y=data[key],
+                    marker_color=colors[key],
+                    text=[f"{v:.2f}" if v is not None and v > 0.01 else "" for v in data[key]],
+                    textposition='inside'
+                ))
+
+            # Update layout
+            fig.update_layout(
+                title=f"Time to First Token Detailed Breakdown (Input Tokens: {token})",
+                xaxis_title="RAM Size",
+                yaxis_title="Time (seconds)",
+                barmode='stack',
+                template='plotly_white',
+                showlegend=True,
+                height=600,
+                width=1000,
+                # Add grid lines for better readability
+                xaxis=dict(
+                    showgrid=True,
+                    gridwidth=1,
+                    gridcolor='LightGray'
+                ),
+                yaxis=dict(
+                    showgrid=True,
+                    gridwidth=1,
+                    gridcolor='LightGray',
+                    zeroline=True,
+                    zerolinewidth=0.1,
+                    zerolinecolor='LightGray'
+                )
+            )
+            
+            # Add a horizontal line separating prefill and decode components
+            for i, ram_size in enumerate(ram_sizes):
+                if all(data[f'prefill_{comp}'][i] is not None for comp in ['user', 'system', 'other']):
+                    prefill_total = data['prefill_user'][i] + data['prefill_system'][i] + data['prefill_other'][i]
+                    
+                    fig.add_shape(
+                        type="line",
+                        x0=i-0.4, x1=i+0.4,
+                        y0=prefill_total, y1=prefill_total,
+                        line=dict(color="black", width=1.5, dash="dot")
+                    )
+            
+            figs.append((token, fig))
+
+    if not has_data:
+        logger.warning("No valid data for TTFT detailed breakdown plot")
+        return None
+
+    return figs
+
 def create_decode_latency_plot(results: Dict, ram_sizes: List[str], input_tokens: List[int]):
     # Create a separate plot for each input token length
     figs = []
@@ -506,8 +713,8 @@ def create_decode_latency_plot(results: Dict, ram_sizes: List[str], input_tokens
                 metrics_list = [m for m in results[ram_size][token] if m.is_valid and m.decode_times]
                 if metrics_list:
                     # Calculate average decode time
-                    avg_decode = np.mean([m.calculate_average_decode_time() for m in metrics_list]) / 4
-                    # avg_decode = np.mean([m.decoding_time_breakdown['avg_latency'] for m in metrics_list[1:]])
+                    # avg_decode = np.mean([m.calculate_average_decode_time() for m in metrics_list]) / 1
+                    avg_decode = np.mean([m.decoding_time_breakdown['avg_latency'] for m in metrics_list])
                     y_values.append(avg_decode)
                     token_has_data = True
                     has_data = True
@@ -520,7 +727,7 @@ def create_decode_latency_plot(results: Dict, ram_sizes: List[str], input_tokens
             fig.add_trace(go.Bar(
                 x=ram_sizes,
                 y=y_values,
-                text=[f"{v:.3f}" if v is not None else "N/A" for v in y_values],
+                text=[f"{v:.2f}" if v is not None else "N/A" for v in y_values],
                 textposition='outside',
                 marker_color='#1f77b4'
             ))
@@ -559,302 +766,6 @@ def create_decode_latency_plot(results: Dict, ram_sizes: List[str], input_tokens
 
     return figs
 
-def create_combined_decode_metrics_plot(results: Dict, ram_sizes: List[str], input_tokens: List[int]):
-    # Create a separate plot for each input token length
-    figs = []
-    has_data = False
-
-    # For each input token length
-    for token in input_tokens:
-        fig = go.Figure()
-        token_has_data = False
-        
-        # Collect latency data for this token length
-        latency_values = []
-        fault_values = []
-        
-        for ram_size in ram_sizes:
-            if token in results[ram_size] and results[ram_size][token]:
-                metrics_list = [m for m in results[ram_size][token] if m.is_valid and m.decode_times]
-                if metrics_list:
-                    # Calculate average decode time
-                    avg_decode = np.mean([m.calculate_average_decode_time() for m in metrics_list]) / 4
-                    # avg_decode = np.mean([m.decoding_time_breakdown['avg_latency'] for m in metrics_list[1:]])
-                    latency_values.append(avg_decode)
-                    
-                    # Calculate average major faults during decode
-                    avg_faults = np.mean([m.phases['Decode'].major_faults for m in metrics_list[1:] if 'Decode' in m.phases])
-                    fault_values.append(avg_faults)
-                    
-                    token_has_data = True
-                    has_data = True
-                else:
-                    latency_values.append(None)
-                    fault_values.append(None)
-            else:
-                latency_values.append(None)
-                fault_values.append(None)
-        
-        if token_has_data:
-            # Calculate y-axis ranges
-            latency_max = max(v for v in latency_values if v is not None)
-            faults_max = max(v for v in fault_values if v is not None)
-            
-            # Add decode latency bars - position slightly to the left
-            x_positions = list(range(len(ram_sizes)))
-            fig.add_trace(go.Bar(
-                name='Decode Latency',
-                x=[x - 0.2 for x in x_positions],  # Shift left
-                y=latency_values,
-                text=[f"{v:.3f}" if v is not None else "N/A" for v in latency_values],
-                textposition='outside',
-                marker_color='#1f77b4',
-                width=0.35,  # Make bars thinner
-                yaxis='y'
-            ))
-            
-            # Add major faults bars - position slightly to the right
-            fig.add_trace(go.Bar(
-                name='Major Page Faults',
-                x=[x + 0.2 for x in x_positions],  # Shift right
-                y=fault_values,
-                text=[f"{v:.1f}" if v is not None else "N/A" for v in fault_values],
-                textposition='outside',
-                marker_color='#E15759',
-                width=0.35,  # Make bars thinner
-                yaxis='y2'
-            ))
-
-            # Update layout for this specific plot
-            fig.update_layout(
-                title=f"Decode Latency and Major Page Faults (Input Tokens: {token})",
-                plot_bgcolor="white",
-                xaxis_title="RAM Size",
-                yaxis=dict(
-                    title=dict(
-                        text="Decode Time (seconds)",
-                        font=dict(color='#1f77b4')
-                    ),
-                    tickfont=dict(color='#1f77b4'),
-                    gridcolor='LightGray',
-                    # zeroline=True,
-                    # zerolinecolor="lightgray",
-                    range=[0, latency_max * 1.2]  # Add 20% padding
-                ),
-                yaxis2=dict(
-                    title=dict(
-                        text="Average Major Page Faults",
-                        font=dict(color='#E15759')
-                    ),
-                    tickfont=dict(color='#E15759'),
-                    anchor="x",
-                    overlaying="y",
-                    side="right",
-                    gridcolor='LightGray',
-                    zeroline=True,
-                    zerolinecolor="lightgray",
-                    zerolinewidth=0.1,
-                    range=[0, faults_max * 1.2]  # Add 20% padding
-                ),
-                showlegend=True,
-                # legend=dict(
-                #     x=-0.15,  # Position legend to the left of the plot
-                #     y=1.0,
-                #     xanchor='right',
-                #     yanchor='bottom',
-                #     bgcolor='rgba(255, 255, 255, 0.8)'  # Semi-transparent background
-                # ),
-                height=600,
-                width=1200,  # Increased width to accommodate legend
-                margin=dict(l=150),  # Added left margin for legend
-                # Add grid lines for better readability
-                xaxis=dict(
-                    showgrid=True,
-                    gridwidth=1,
-                    gridcolor='LightGray',
-                    ticktext=ram_sizes,
-                    tickvals=x_positions,
-                    # zeroline=True,
-                    # zerolinecolor="lightgray",
-                )
-            )
-            figs.append((token, fig))
-
-    if not has_data:
-        logger.warning("No valid data for combined decode metrics plot")
-        return None
-
-    return figs
-
-def create_decode_minor_faults_plot(results: Dict, ram_sizes: List[str], input_tokens: List[int]):
-    figs = []
-    has_data = False
-
-    for token in input_tokens:
-        fig = go.Figure()
-        token_has_data = False
-        
-        y_values = []
-        for ram_size in ram_sizes:
-            if token in results[ram_size] and results[ram_size][token]:
-                metrics_list = [m for m in results[ram_size][token] if m.is_valid and 'Decode' in m.phases]
-                if metrics_list:
-                    # Use the total minor faults instead of average
-                    avg_faults = np.mean([m.phases['Decode'].minor_faults for m in metrics_list])
-                    y_values.append(avg_faults)
-                    token_has_data = True
-                    has_data = True
-                else:
-                    y_values.append(None)
-            else:
-                y_values.append(None)
-        
-        if token_has_data:
-            fig.add_trace(go.Bar(
-                x=ram_sizes,
-                y=y_values,
-                text=[f"{v:,.0f}" if v is not None else "N/A" for v in y_values],  # Format with commas
-                textposition='outside',
-                marker_color='#2ca02c'
-            ))
-
-            fig.update_layout(
-                title=f"Minor Page Faults During Decode Phase (Input Tokens: {token})",
-                xaxis_title="RAM Size",
-                yaxis_title="Number of Minor Page Faults",
-                template='plotly_white',
-                showlegend=False,
-                height=600,
-                width=1000,
-                xaxis=dict(
-                    showgrid=True,
-                    gridwidth=1,
-                    gridcolor='LightGray',
-                ),
-                yaxis=dict(
-                    showgrid=True,
-                    gridwidth=1,
-                    gridcolor='LightGray',
-                    zeroline=True,
-                    zerolinewidth=2,
-                    zerolinecolor='Gray',
-                    # Format y-axis labels with commas
-                    tickformat=",d"
-                )
-            )
-            figs.append((token, fig))
-
-    if not has_data:
-        logger.warning("No valid data for decode minor faults plot")
-        return None
-
-    return figs
-
-def create_combined_decode_latency_minor_faults_plot(results: Dict, ram_sizes: List[str], input_tokens: List[int]):
-    figs = []
-    has_data = False
-
-    for token in input_tokens:
-        fig = go.Figure()
-        token_has_data = False
-        
-        latency_values = []
-        fault_values = []
-        
-        for ram_size in ram_sizes:
-            if token in results[ram_size] and results[ram_size][token]:
-                metrics_list = [m for m in results[ram_size][token] if m.is_valid and m.decode_times]
-                if metrics_list:
-                    # Use CPU time for latency
-                    # 나중에 rusage 사용이 명확해지면 사용, thread 여러 개일 때 사용 불가가
-                    avg_decode = np.mean([m.calculate_average_decode_time() for m in metrics_list]) / 4
-                    # avg_decode = np.mean([m.decoding_time_breakdown['avg_latency'] for m in metrics_list[1:]])
-                    latency_values.append(avg_decode)
-                    
-                    # Use total minor faults
-                    avg_faults = np.mean([m.phases['Decode'].minor_faults for m in metrics_list if 'Decode' in m.phases])
-                    fault_values.append(avg_faults)
-                    
-                    token_has_data = True
-                    has_data = True
-                else:
-                    latency_values.append(None)
-                    fault_values.append(None)
-            else:
-                latency_values.append(None)
-                fault_values.append(None)
-        
-        if token_has_data:
-            x_positions = list(range(len(ram_sizes)))
-            
-            # Add decode latency bars
-            fig.add_trace(go.Bar(
-                name='Decode Latency',
-                x=[x - 0.2 for x in x_positions],
-                y=latency_values,
-                text=[f"{v:.3f}" if v is not None else "N/A" for v in latency_values],
-                textposition='outside',
-                marker_color='#1f77b4',
-                width=0.35,
-                yaxis='y'
-            ))
-            
-            # Add minor faults bars
-            fig.add_trace(go.Bar(
-                name='Minor Page Faults',
-                x=[x + 0.2 for x in x_positions],
-                y=fault_values,
-                text=[f"{v:,.0f}" if v is not None else "N/A" for v in fault_values],  # Format with commas
-                textposition='outside',
-                marker_color='#2ca02c',
-                width=0.35,
-                yaxis='y2'
-            ))
-
-            fig.update_layout(
-                title=f"Decode Latency and Minor Page Faults (Input Tokens: {token})",
-                plot_bgcolor="white",
-                xaxis_title="RAM Size",
-                yaxis=dict(
-                    title=dict(
-                        text="Decode Latency (seconds)",
-                        font=dict(color='#1f77b4')
-                    ),
-                    tickfont=dict(color='#1f77b4'),
-                    gridcolor='LightGray'
-                ),
-                yaxis2=dict(
-                    title=dict(
-                        text="Number of Minor Page Faults",
-                        font=dict(color='#2ca02c')
-                    ),
-                    tickfont=dict(color='#2ca02c'),
-                    anchor="x",
-                    overlaying="y",
-                    side="right",
-                    gridcolor='LightGray',
-                    tickformat=",d"  # Format y-axis labels with commas
-                ),
-                showlegend=True,
-                height=600,
-                width=1200,
-                margin=dict(l=150),
-                xaxis=dict(
-                    showgrid=True,
-                    gridwidth=1,
-                    gridcolor='LightGray',
-                    ticktext=ram_sizes,
-                    tickvals=x_positions
-                )
-            )
-            figs.append((token, fig))
-
-    if not has_data:
-        logger.warning("No valid data for combined decode metrics plot")
-        return None
-
-    return figs
-
 def create_decoding_time_breakdown_plot(results: Dict, ram_sizes: List[str], input_tokens: List[int]):
     """
     Create a stacked bar plot showing breakdown of decoding time 
@@ -865,9 +776,9 @@ def create_decoding_time_breakdown_plot(results: Dict, ram_sizes: List[str], inp
 
     # Color scheme for time components
     time_colors = {
-        'user_time': '#EDC948',      # Orange
-        'system_time': '#BAB0AC',    # Green
-        'other_time': '#d62728'      # Red
+        'user_time': '#EDC948',      
+        'system_time': '#BAB0AC',    
+        'other_time': '#d62728'      
     }
 
     # For each input token length
@@ -890,8 +801,8 @@ def create_decoding_time_breakdown_plot(results: Dict, ram_sizes: List[str], inp
                     # Calculate averages for latency, user time, and system time
                     avg_latency = np.mean([m.decoding_time_breakdown['avg_latency'] for m in metrics_list])
                     logger.info(f"AVG {avg_latency}")
-                    avg_user_time = np.mean([m.decoding_time_breakdown['user_time'] for m in metrics_list]) / 4
-                    avg_system_time = np.mean([m.decoding_time_breakdown['system_time'] for m in metrics_list]) / 4
+                    avg_user_time = np.mean([m.decoding_time_breakdown['user_time'] for m in metrics_list]) / 1
+                    avg_system_time = np.mean([m.decoding_time_breakdown['system_time'] for m in metrics_list]) / 1
                     
                     # Calculate other time
                     avg_cpu_time = avg_user_time + avg_system_time
@@ -916,32 +827,32 @@ def create_decoding_time_breakdown_plot(results: Dict, ram_sizes: List[str], inp
         if token_has_data:
             # Add traces for user time and system time
             fig.add_trace(go.Bar(
-                name='User Time',
+                name='User Inference Code Time',
                 x=ram_sizes,
                 y=time_values['user_time'],
                 marker_color=time_colors['user_time'],
-                text=[f"{v:.3f}" if v is not None else "N/A" for v in time_values['user_time']],
+                text=[f"{v:.2f}" if v is not None else "N/A" for v in time_values['user_time']],
                 textposition='inside'
             ))
             
             fig.add_trace(go.Bar(
-                name='System Time',
+                name='I/O Time',
                 x=ram_sizes,
                 y=time_values['system_time'],
                 marker_color=time_colors['system_time'],
-                text=[f"{v:.3f}" if v is not None else "N/A" for v in time_values['system_time']],
+                text=[f"{v:.2f}" if v is not None else "N/A" for v in time_values['system_time']],
                 textposition='inside'
             ))
             
             # Add other time trace
-            # fig.add_trace(go.Bar(
-            #     name='Other Time',
-            #     x=ram_sizes,
-            #     y=time_values['other_time'],
-            #     marker_color=time_colors['other_time'],
-            #     text=[f"{v:.3f}" if v is not None else "N/A" for v in time_values['other_time']],
-            #     textposition='inside'
-            # ))
+            fig.add_trace(go.Bar(
+                name='Preempt Time',
+                x=ram_sizes,
+                y=time_values['other_time'],
+                marker_color=time_colors['other_time'],
+                text=[f"{v:.2f}" if v is not None else "N/A" for v in time_values['other_time']],
+                textposition='inside'
+            ))
 
             # Update layout
             fig.update_layout(
@@ -973,7 +884,7 @@ def create_decoding_time_breakdown_plot(results: Dict, ram_sizes: List[str], inp
                 x=ram_sizes,
                 y=time_values['avg_latency'],
                 mode='text',
-                # text=[f"Total: {v:.3f}" for v in time_values['avg_latency']],
+                # text=[f"Total: {v:.2f}" for v in time_values['avg_latency']],
                 textposition='top center',
                 showlegend=False
             ))
@@ -982,141 +893,6 @@ def create_decoding_time_breakdown_plot(results: Dict, ram_sizes: List[str], inp
 
     if not has_data:
         logger.warning("No valid data for decoding time breakdown plot")
-        return None
-
-    return figs
-
-def create_prefill_major_faults_plot(results: Dict, ram_sizes: List[str], input_tokens: List[int]):
-    # Create a separate plot for each input token length
-    figs = []
-    has_data = False
-
-    # For each input token length
-    for token in input_tokens:
-        fig = go.Figure()
-        token_has_data = False
-        
-        # Collect data for this token length
-        y_values = []
-        for ram_size in ram_sizes:
-            if token in results[ram_size] and results[ram_size][token]:
-                metrics_list = [m for m in results[ram_size][token] if m.is_valid and 'Prefill' in m.phases]
-                if metrics_list:
-                    # Calculate average major faults for prefill phase
-                    avg_faults = np.mean([m.phases['Prefill'].major_faults for m in metrics_list])
-                    y_values.append(avg_faults)
-                    token_has_data = True
-                    has_data = True
-                else:
-                    y_values.append(None)
-            else:
-                y_values.append(None)
-        
-        if token_has_data:
-            fig.add_trace(go.Bar(
-                x=ram_sizes,
-                y=y_values,
-                text=[f"{v:.1f}" if v is not None else "N/A" for v in y_values],
-                textposition='outside',
-                marker_color='#E15759'  # Orange color to match prefill phase
-            ))
-
-            # Update layout for this specific plot
-            fig.update_layout(
-                title=f"Major Page Faults During Prefill Phase (Input Tokens: {token})",
-                xaxis_title="RAM Size",
-                yaxis_title="Average Major Page Faults",
-                template='plotly_white',
-                showlegend=False,
-                height=600,
-                width=1000,
-                xaxis=dict(
-                    showgrid=True,
-                    gridwidth=1,
-                    gridcolor='LightGray',
-                    zeroline=True,
-                    zerolinecolor='LightGray'
-                ),
-                yaxis=dict(
-                    showgrid=True,
-                    gridwidth=1,
-                    gridcolor='LightGray',
-                    zeroline=True,
-                    zerolinewidth=2,
-                    zerolinecolor='Gray'
-                )
-            )
-            figs.append((token, fig))
-
-    if not has_data:
-        logger.warning("No valid data for prefill major faults plot")
-        return None
-
-    return figs
-
-def create_prefill_minor_faults_plot(results: Dict, ram_sizes: List[str], input_tokens: List[int]):
-    # Create a separate plot for each input token length
-    figs = []
-    has_data = False
-
-    # For each input token length
-    for token in input_tokens:
-        fig = go.Figure()
-        token_has_data = False
-        
-        # Collect data for this token length
-        y_values = []
-        for ram_size in ram_sizes:
-            if token in results[ram_size] and results[ram_size][token]:
-                metrics_list = [m for m in results[ram_size][token] if m.is_valid and 'Prefill' in m.phases]
-                if metrics_list:
-                    # Calculate average minor faults for prefill phase
-                    avg_faults = np.mean([m.phases['Prefill'].minor_faults for m in metrics_list])
-                    y_values.append(avg_faults)
-                    token_has_data = True
-                    has_data = True
-                else:
-                    y_values.append(None)
-            else:
-                y_values.append(None)
-        
-        if token_has_data:
-            fig.add_trace(go.Bar(
-                x=ram_sizes,
-                y=y_values,
-                text=[f"{v:,.0f}" if v is not None else "N/A" for v in y_values],  # Format with commas
-                textposition='outside',
-                marker_color='#2ca02c'  # Orange color to match prefill phase
-            ))
-
-            # Update layout for this specific plot
-            fig.update_layout(
-                title=f"Minor Page Faults During Prefill Phase (Input Tokens: {token})",
-                xaxis_title="RAM Size",
-                yaxis_title="Number of Minor Page Faults",
-                template='plotly_white',
-                showlegend=False,
-                height=600,
-                width=1000,
-                xaxis=dict(
-                    showgrid=True,
-                    gridwidth=1,
-                    gridcolor='LightGray'
-                ),
-                yaxis=dict(
-                    showgrid=True,
-                    gridwidth=1,
-                    gridcolor='LightGray',
-                    zeroline=True,
-                    zerolinewidth=2,
-                    zerolinecolor='Gray',
-                    tickformat=",d"  # Format y-axis labels with commas
-                )
-            )
-            figs.append((token, fig))
-
-    if not has_data:
-        logger.warning("No valid data for prefill minor faults plot")
         return None
 
     return figs
@@ -1159,7 +935,7 @@ def main():
                       help='Base directory containing RAM size subdirectories')
     parser.add_argument('--ram-sizes', type=str, nargs='+',
                       help='List of RAM sizes to analyze (e.g., 4G 8G 16G 512M)')
-    parser.add_argument('--input-tokens', type=int, nargs='+', default=[8, 128, 512],
+    parser.add_argument('--input-tokens', type=int, nargs='+', default=[8],
                       help='List of input token lengths to analyze')
     
     args = parser.parse_args()
@@ -1196,15 +972,10 @@ def main():
     
     # Create and display plots
     plot_functions = {
-        'decode_major_faults': create_decode_major_faults_plot,
-        'decode_minor_faults': create_decode_minor_faults_plot, 
         'ttft_breakdown': create_ttft_plot,
+        'ttft_detailed_breakdown': create_ttft_detailed_breakdown_plot,
         'decode_latency': create_decode_latency_plot,
-        'combined_decode_metrics': create_combined_decode_metrics_plot,
-        'combined_decode_latency_minor_faults': create_combined_decode_latency_minor_faults_plot,
         'decoding_time_breakdown': create_decoding_time_breakdown_plot,
-        'create_prefill_major_faults_plot': create_prefill_major_faults_plot,
-        'create_prefill_minor_faults_plot': create_prefill_minor_faults_plot
     }
     
     plots_created = False

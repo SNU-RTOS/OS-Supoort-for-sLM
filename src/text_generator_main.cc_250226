@@ -68,7 +68,7 @@ namespace
 {
 
     using ai_edge_torch::examples::AlignedAllocator;
-    using ai_edge_torch::examples::LoRA; // LoRA is not in use
+    using ai_edge_torch::examples::LoRA;
 
     // Performance metrics structure to store all relevant timing data
     struct PerfStats {
@@ -420,7 +420,6 @@ namespace
                 }
                 phase_start_core_times[phase_name] = core_start_times;
                 
-                // [NOTE] Per-core functionalities below, does not work properly.
                 // NEW: Setup per-core timespec measurements
                 CoreTimespec core_timespec;
                 core_timespec.start_times.resize(monitored_cores.size());
@@ -439,7 +438,7 @@ namespace
                 }
                 phase_core_timespec[phase_name] = core_timespec;
 
-                // Setup per-core monitoring, 
+                // Setup per-core monitoring
                 CoreEventFds core_fds;
                 core_fds.user_time_fds.resize(monitored_cores.size(), -1);
                 core_fds.system_time_fds.resize(monitored_cores.size(), -1);
@@ -1379,6 +1378,130 @@ namespace
         }
     }
 
+    void uploadTensorsForSubgraph(tflite::Interpreter* interpreter, int subgraph_idx) {
+        if (!interpreter) return;
+
+        // Get the specific subgraph
+        const tflite::Subgraph& subgraph = (subgraph_idx == 0) ?
+        interpreter->primary_subgraph() :
+        *interpreter->subgraph(subgraph_idx);
+
+        const std::vector<int>& execution_plan = subgraph.execution_plan();
+        std::unordered_set<int> seen_tensors;
+
+        std::cout << "Touching tensors for subgraph " << subgraph_idx << "\n";
+
+        for (int node_idx : execution_plan) {
+            const auto* node_and_reg = subgraph.node_and_registration(node_idx);
+            const TfLiteNode* node = &node_and_reg->first;
+
+            // Touch input tensors
+            for (int i = 0; i < node->inputs->size; ++i) {
+                int tensor_idx = node->inputs->data[i];
+                if (tensor_idx < 0 || seen_tensors.count(tensor_idx)) continue;
+
+                TfLiteTensor* tensor = interpreter->tensor(tensor_idx);
+                if (tensor && tensor->data.raw) {
+                    volatile char dummy = *reinterpret_cast<char*>(tensor->data.raw);
+                    (void)dummy;
+                }
+                seen_tensors.insert(tensor_idx);
+            }
+
+            // Touch output tensors
+            for (int i = 0; i < node->outputs->size; ++i) {
+                int tensor_idx = node->outputs->data[i];
+                if (tensor_idx < 0 || seen_tensors.count(tensor_idx)) continue;
+
+                TfLiteTensor* tensor = interpreter->tensor(tensor_idx);
+                if (tensor && tensor->data.raw) {
+                    volatile char dummy = *reinterpret_cast<char*>(tensor->data.raw);
+                    (void)dummy;
+                }
+                seen_tensors.insert(tensor_idx);
+            }
+
+            // Touch temporary tensors
+            for (int i = 0; i < node->temporaries->size; ++i) {
+                int tensor_idx = node->temporaries->data[i];
+                if (tensor_idx < 0 || seen_tensors.count(tensor_idx)) continue;
+
+                TfLiteTensor* tensor = interpreter->tensor(tensor_idx);
+                if (tensor && tensor->data.raw) {
+                    size_t size = tensor->bytes;
+                    for (size_t offset = 0; offset < size; offset += 4096) {
+                        volatile char dummy = *reinterpret_cast<char*>(tensor->data.raw + std::min(offset, size - 1));
+                        (void)dummy;
+                    }
+                }
+                seen_tensors.insert(tensor_idx);
+            }
+        }
+        std::cout << "Touched " << seen_tensors.size() << " tensors in subgraph " << subgraph_idx << "\n";
+    }
+
+    void uploadTensorsForAllSubgraphs(tflite::Interpreter* interpreter) {
+        if (!interpreter) {
+            std::cerr << "Invalid interpreter pointer\n";
+            return;
+        }
+    
+        // Get the number of subgraphs
+        size_t num_subgraphs = interpreter->subgraphs_size();
+        std::cout << "Processing " << num_subgraphs << " subgraphs\n";
+    
+        // Keep track of total tensors touched across all subgraphs
+        size_t total_tensors_touched = 0;
+    
+        // Process each subgraph
+        for (size_t subgraph_idx = 0; subgraph_idx < num_subgraphs; ++subgraph_idx) {
+            const tflite::Subgraph& subgraph = (subgraph_idx == 0) ?
+                interpreter->primary_subgraph() :
+                *interpreter->subgraph(subgraph_idx);
+    
+            const std::vector<int>& execution_plan = subgraph.execution_plan();
+            std::unordered_set<int> seen_tensors;
+    
+            std::cout << "Touching tensors for subgraph " << subgraph_idx << "\n";
+    
+            // Process each node in the execution plan
+            for (int node_idx : execution_plan) {
+                const auto* node_and_reg = subgraph.node_and_registration(node_idx);
+                const TfLiteNode* node = &node_and_reg->first;
+    
+                // Helper lambda to process tensors
+                auto processTensors = [&](const TfLiteIntArray* tensor_array) {
+                    if (!tensor_array) return;
+                    for (int i = 0; i < tensor_array->size; ++i) {
+                        int tensor_idx = tensor_array->data[i];
+                        if (tensor_idx < 0 || seen_tensors.count(tensor_idx)) continue;
+    
+                        TfLiteTensor* tensor = interpreter->tensor(tensor_idx);
+                        if (tensor && tensor->data.raw) {
+                            size_t size = tensor->bytes;
+                            for (size_t offset = 0; offset < size; offset += 4096) {
+                                volatile char dummy = *reinterpret_cast<char*>(tensor->data.raw + std::min(offset, size - 1));
+                                (void)dummy;
+                            }
+                        }
+                        seen_tensors.insert(tensor_idx);
+                    }
+                };
+    
+                // Process all tensor types
+                processTensors(node->inputs);
+                processTensors(node->outputs);
+                processTensors(node->temporaries);
+            }
+    
+            total_tensors_touched += seen_tensors.size();
+            std::cout << "Touched " << seen_tensors.size() << " tensors in subgraph " << subgraph_idx << "\n";
+        }
+    
+        std::cout << "Total tensors touched across all subgraphs: " << total_tensors_touched << "\n";
+    }
+    
+
 } // end anonymous namespace
 
 // =======================================================================
@@ -1409,10 +1532,13 @@ int main(int argc, char *argv[])
     }
     std::cout << std::endl;
 
-    // Just monitor the cores we're allowed to run on (should be only core 0 with taskset -c 0-0)
+    // Just monitor the cores we're allowed to run on (should be only core 0 with taskset)
     PerformanceMonitor perf_monitor(active_cores);
     PerformanceMetrics metrics;
     PerfStats stats;
+
+    // Add some code to get I/O stats from /proc for better I/O measurement
+    double proc_io_wait_start = 0.0;
 
     // 0-2. Variable for CPU time only
     rusage usage_start, usage_end;
@@ -1441,6 +1567,23 @@ int main(int argc, char *argv[])
     PrintRUsage(usage_start, usage_end, "Interpreter Building");
     metrics.RecordStats("Build_Interpreter", stats);
 
+    // Tensor upload before prefill
+    {
+        ScopeTimer timer("Tensor Uploading");
+        getrusage(RUSAGE_SELF, &usage_start);
+        perf_monitor.start_phase("Upload_Tensor");
+
+        // Uploading Here
+        // uploadTensorsForSubgraph(interpreter.get(), 0);
+        // uploadTensorsForSubgraph(interpreter.get(), 5);
+        // uploadTensorsForAllSubgraphs(interpreter.get());
+
+        stats = perf_monitor.end_phase("Upload_Tensor");
+        getrusage(RUSAGE_SELF, &usage_end);
+    }
+    PrintRUsage(usage_start, usage_end, "Tensor Uploading");
+    metrics.RecordStats("Upload_Tensor", stats);
+
     // 3. Load SentencePiece
     {
         ScopeTimer timer("SentencePiece Loading");
@@ -1466,7 +1609,7 @@ int main(int argc, char *argv[])
     PrintRUsage(usage_start, usage_end, "KV Cache Building");
     metrics.RecordStats("Build_KVCache", stats);
 
-    // 5. Optionally load LoRA: Not In Use
+    // 5. Optionally load LoRA
     // {
     //     ScopeTimer timer("LoRA Loading");
     //     if (!absl::GetFlag(FLAGS_lora_path).empty())
@@ -1510,13 +1653,17 @@ int main(int argc, char *argv[])
         perf_monitor.start_phase("Prepare_Runners");
         std::size_t effective_prefill_token_size =
             (prompt_tokens.size() > 0) ? (prompt_tokens.size() - 1) : 0;
-
+            // std::cout << "HELLO";
         prefill_runner = GetPrefillRunner(
             interpreter.get(), effective_prefill_token_size, kv_cache, nullptr);
+        // std::cout << "HELLO2";
         MINIMAL_CHECK(prefill_runner != nullptr);
+        // std::cout << "HELLO1";
 
         decode_runner = GetDecodeRunner(interpreter.get(), kv_cache, nullptr);
+        // std::cout << "HELLO4";
         MINIMAL_CHECK(decode_runner != nullptr);
+        // std::cout << "HELLO3";
 
         stats = perf_monitor.end_phase("Prepare_Runners");
         getrusage(RUSAGE_SELF, &usage_end);
