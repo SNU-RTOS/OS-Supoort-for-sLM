@@ -10,6 +10,7 @@ result_*
 perf.*
 *.txt
 .env
+text_generator_main
 
 # Excludes from User files
 !evaluation/show-plot.py

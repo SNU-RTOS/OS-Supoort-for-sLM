@@ -6,8 +6,6 @@ source .env
 
 TENSORFLOW_COMMIT_HASH=117a62ac439ed87eb26f67208be60e01c21960de
 
-AI_EDGE_TORCH_PATH=${EXTERNAL_PATH}/${AI_EDGE_TORCH_PATH}
-TENSORFLOW_PATH=${EXTERNAL_PATH}/${TENSORFLOW_PATH}
 
 LLM_APP_SRC=${ROOT_PATH}/src
 LLM_APP_BINARY_NAME=text_generator_main
@@ -65,7 +63,7 @@ echo "========================"
 ########## Make soft symlink ##########
 echo "[INFO] Succefully built ${LLM_APP_BINARY_NAME}"
 echo "[INFO] Making soft symbolic link ${LLM_APP_BINARY_NAME} from ${LLM_APP_BINARY_PATH} to ${ROOT_PATH}"
-if [ -f ${LLM_APP_BINARY_NAME} ]; then
+if [ ${LLM_APP_BINARY_NAME} ]; then
     rm ${LLM_APP_BINARY_NAME}
     echo "Deleted: ${LLM_APP_BINARY_NAME}"
 fi
