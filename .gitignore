@@ -11,6 +11,7 @@ perf.*
 *.txt
 .env
 text_generator_main
+models/*
 
 # Excludes from User files
 !evaluation/show-plot.py
@@ -21,4 +22,3 @@ text_generator_main
 backup
 log_backup
 external
-
